@@ -63,7 +63,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"running: {status.running}")
             print(f"label: {status.label}")
             print(f"trace2: {status.trace2_target}")
-            print(f"socket: {status.socket_path}")
+            print(f"event log: {status.event_path}")
+            print(f"launcher: {status.plist_path}")
             print(f"expected trace2: {status.expected_trace2_target}")
             return 0
         if args.command == "monitor":

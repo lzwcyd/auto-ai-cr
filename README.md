@@ -10,11 +10,24 @@
 
 ## 快速开始
 
-一行安装：
+macOS / Linux 一行安装：
 
 ```bash
 curl -fsSL https://github.com/lzwcyd/auto-ai-cr/releases/latest/download/install.sh | bash
 ```
+
+Windows PowerShell：
+
+```powershell
+irm https://github.com/lzwcyd/auto-ai-cr/releases/latest/download/install.ps1 | iex
+```
+
+Windows Git Bash 也可以使用 `install.sh`。Release 会自动提供这些二进制：
+
+- `auto-ai-cr-macos-arm64.tar.gz`
+- `auto-ai-cr-macos-x64.tar.gz`
+- `auto-ai-cr-linux-x64.tar.gz`
+- `auto-ai-cr-windows-x64.zip`
 
 启动配置页面：
 
@@ -107,7 +120,7 @@ auto-ai-cr install-monitor --repo ~/code/github
 
 ```text
 git commit 成功
--> Git Trace2 发送 JSON 事件到 auto-ai-cr daemon 的 Unix socket
+-> Git Trace2 追加 JSON 事件到本机事件日志
 -> auto-ai-cr daemon 识别 cmd_name=commit 且 exit code=0
 -> auto-ai-cr daemon 读取当前 HEAD 得到 commit SHA
 -> 按当前配置调用 Codex CLI / Claude Code / 自定义命令
@@ -115,7 +128,7 @@ git commit 成功
 -> 写入本地 refs/notes/codex-cr
 ```
 
-启用 daemon 会把全局 `trace2.eventtarget` 指向 `auto-ai-cr` 的本地 Unix socket。若原来已有 target，`auto-ai-cr` 会记录它；卸载最后一个监听仓库时会尝试恢复。
+启用 daemon 会把全局 `trace2.eventtarget` 指向 `~/.auto-ai-cr/daemon/trace2-event.jsonl`。这个文件型 Trace2 target 可在 macOS、Linux、Windows 上工作；若原来已有 target，`auto-ai-cr` 会记录它，卸载最后一个监听仓库时会尝试恢复。
 
 查看状态：
 

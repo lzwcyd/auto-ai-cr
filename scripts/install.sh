@@ -3,20 +3,62 @@ set -euo pipefail
 
 REPO="${AUTO_AI_CR_REPO:-lzwcyd/auto-ai-cr}"
 VERSION="${AUTO_AI_CR_VERSION:-latest}"
-INSTALL_DIR="${AUTO_AI_CR_INSTALL_DIR:-$HOME/.auto-ai-cr/app}"
+INSTALL_DIR="${AUTO_AI_CR_INSTALL_DIR:-$HOME/.auto-ai-cr/bin}"
 BIN_DIR="${AUTO_AI_CR_BIN_DIR:-$HOME/.local/bin}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  echo "auto-ai-cr: python3 is required" >&2
-  exit 1
-fi
+need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "auto-ai-cr: $1 is required" >&2
+    exit 1
+  fi
+}
 
-"$PYTHON_BIN" - <<'PY'
-import sys
-if sys.version_info < (3, 10):
-    raise SystemExit("auto-ai-cr: Python 3.10+ is required")
-PY
+download() {
+  local url="$1"
+  local output="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$output" "$url"
+  else
+    echo "auto-ai-cr: curl or wget is required" >&2
+    exit 1
+  fi
+}
+
+detect_asset() {
+  local os arch platform
+  os="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os" in
+    Darwin)
+      case "$arch" in
+        arm64|aarch64) platform="macos-arm64" ;;
+        x86_64|amd64) platform="macos-x64" ;;
+        *) echo "auto-ai-cr: unsupported macOS architecture: $arch" >&2; exit 1 ;;
+      esac
+      echo "auto-ai-cr-$platform.tar.gz"
+      ;;
+    Linux)
+      case "$arch" in
+        x86_64|amd64) platform="linux-x64" ;;
+        *) echo "auto-ai-cr: unsupported Linux architecture: $arch" >&2; exit 1 ;;
+      esac
+      echo "auto-ai-cr-$platform.tar.gz"
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      case "$arch" in
+        x86_64|amd64) platform="windows-x64" ;;
+        *) echo "auto-ai-cr: unsupported Windows architecture: $arch" >&2; exit 1 ;;
+      esac
+      echo "auto-ai-cr-$platform.zip"
+      ;;
+    *)
+      echo "auto-ai-cr: unsupported OS: $os" >&2
+      exit 1
+      ;;
+  esac
+}
 
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -24,37 +66,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
+asset="${AUTO_AI_CR_ASSET:-$(detect_asset)}"
 if [ -n "${AUTO_AI_CR_ARCHIVE_URL:-}" ]; then
   archive_url="$AUTO_AI_CR_ARCHIVE_URL"
 elif [ "$VERSION" = "latest" ]; then
-  archive_url="https://github.com/$REPO/releases/latest/download/auto-ai-cr.tar.gz"
+  archive_url="https://github.com/$REPO/releases/latest/download/$asset"
 else
-  archive_url="https://github.com/$REPO/releases/download/$VERSION/auto-ai-cr.tar.gz"
+  archive_url="https://github.com/$REPO/releases/download/$VERSION/$asset"
 fi
 
-echo "Downloading auto-ai-cr from $archive_url"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$archive_url" -o "$tmp_dir/auto-ai-cr.tar.gz"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$tmp_dir/auto-ai-cr.tar.gz" "$archive_url"
-else
-  echo "auto-ai-cr: curl or wget is required" >&2
-  exit 1
-fi
+echo "Downloading auto-ai-cr $VERSION ($asset)"
+download "$archive_url" "$tmp_dir/$asset"
 
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
-tar -xzf "$tmp_dir/auto-ai-cr.tar.gz" -C "$INSTALL_DIR" --strip-components=1
 
-cat > "$BIN_DIR/auto-ai-cr" <<EOF
-#!/usr/bin/env bash
-export PYTHONPATH="$INSTALL_DIR/src\${PYTHONPATH:+:\$PYTHONPATH}"
-exec "${PYTHON_BIN}" -m auto_ai_cr.cli "\$@"
-EOF
-chmod +x "$BIN_DIR/auto-ai-cr"
+case "$asset" in
+  *.tar.gz)
+    need tar
+    tar -xzf "$tmp_dir/$asset" -C "$INSTALL_DIR"
+    binary_name="auto-ai-cr"
+    ;;
+  *.zip)
+    need unzip
+    unzip -q "$tmp_dir/$asset" -d "$INSTALL_DIR"
+    binary_name="auto-ai-cr.exe"
+    ;;
+  *)
+    echo "auto-ai-cr: unsupported archive type: $asset" >&2
+    exit 1
+    ;;
+esac
 
-echo "auto-ai-cr installed to $INSTALL_DIR"
-echo "Executable: $BIN_DIR/auto-ai-cr"
+chmod +x "$INSTALL_DIR/$binary_name" 2>/dev/null || true
+cp "$INSTALL_DIR/$binary_name" "$BIN_DIR/$binary_name"
+chmod +x "$BIN_DIR/$binary_name" 2>/dev/null || true
+
+echo "auto-ai-cr installed: $BIN_DIR/$binary_name"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
@@ -67,4 +115,8 @@ esac
 
 echo
 echo "Start the UI:"
-echo "  auto-ai-cr ui --open"
+if [ "$binary_name" = "auto-ai-cr.exe" ]; then
+  echo "  auto-ai-cr.exe ui --open"
+else
+  echo "  auto-ai-cr ui --open"
+fi

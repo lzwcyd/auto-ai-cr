@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.2.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset: auto-ai-cr-linux-x64.tar.gz
+            binary: auto-ai-cr
+          - os: macos-13
+            asset: auto-ai-cr-macos-x64.tar.gz
+            binary: auto-ai-cr
+          - os: macos-14
+            asset: auto-ai-cr-macos-arm64.tar.gz
+            binary: auto-ai-cr
+          - os: windows-latest
+            asset: auto-ai-cr-windows-x64.zip
+            binary: auto-ai-cr.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pytest pyinstaller
+
+      - name: Test
+        run: python -m pytest -q
+
+      - name: Build executable
+        run: python -m PyInstaller --clean --onefile --name auto-ai-cr --paths src packaging/auto-ai-cr.py
+
+      - name: Smoke test executable
+        run: dist/${{ matrix.binary }} --help
+        shell: bash
+
+      - name: Package Unix asset
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p package
+          cp "dist/${{ matrix.binary }}" package/
+          chmod +x "package/${{ matrix.binary }}"
+          tar -C package -czf "${{ matrix.asset }}" "${{ matrix.binary }}"
+        shell: bash
+
+      - name: Package Windows asset
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force package | Out-Null
+          Copy-Item "dist/${{ matrix.binary }}" "package/${{ matrix.binary }}"
+          Compress-Archive -Path "package/${{ matrix.binary }}" -DestinationPath "${{ matrix.asset }}" -Force
+        shell: pwsh
+
+      - name: Upload asset artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Add installer scripts
+        run: |
+          cp scripts/install.sh release-assets/install.sh
+          cp scripts/install.ps1 release-assets/install.ps1
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/*

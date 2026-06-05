@@ -688,8 +688,8 @@ HTML = r"""<!doctype html>
         <div class="fact"><span>配置文件</span><code id="configPath">-</code></div>
         <div class="fact"><span>auto-ai-cr daemon</span><strong id="hookState">-</strong></div>
         <div class="fact"><span>Trace2</span><code id="trace2State">-</code></div>
-        <div class="fact"><span>Socket</span><code id="socketPath">-</code></div>
-        <div class="fact"><span>LaunchAgent</span><code id="monitorPath">-</code></div>
+        <div class="fact"><span>事件日志</span><code id="eventPath">-</code></div>
+        <div class="fact"><span>后台启动器</span><code id="monitorPath">-</code></div>
       </div>
     </aside>
   </main>
@@ -717,7 +717,7 @@ HTML = r"""<!doctype html>
       configPath: document.querySelector("#configPath"),
       hookState: document.querySelector("#hookState"),
       trace2State: document.querySelector("#trace2State"),
-      socketPath: document.querySelector("#socketPath"),
+      eventPath: document.querySelector("#eventPath"),
       monitorPath: document.querySelector("#monitorPath"),
       refreshButton: document.querySelector("#refreshButton"),
       saveButton: document.querySelector("#saveButton"),
@@ -833,8 +833,8 @@ HTML = r"""<!doctype html>
       els.configPath.textContent = state.git.configPath;
       els.hookState.textContent = monitorText(state.monitor);
       els.trace2State.textContent = state.monitor.trace2Target || "未配置";
-      els.socketPath.textContent = state.monitor.socketPath;
-      els.monitorPath.textContent = state.monitor.plistPath;
+      els.eventPath.textContent = state.monitor.eventPath || state.monitor.socketPath;
+      els.monitorPath.textContent = state.monitor.launcherPath || state.monitor.plistPath;
       els.branches.innerHTML = "";
       for (const branch of state.git.branches) {
         const option = document.createElement("option");
