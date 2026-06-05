@@ -4,10 +4,17 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import shutil
 from urllib.parse import parse_qs, urlparse
 import webbrowser
 
-from .config import AppConfig, load_config, write_config
+from .config import (
+    CLAUDE_REVIEW_COMMAND,
+    CODEX_REVIEW_COMMAND,
+    AppConfig,
+    load_config,
+    write_config,
+)
 from .git_ops import (
     DiffRequest,
     GitError,
@@ -143,6 +150,7 @@ def _state(repo: Path) -> dict[str, object]:
             "hookInstalled": (repo / ".git" / "hooks" / "post-commit").exists(),
             "configPath": str(repo / ".auto-ai-cr.json"),
         },
+        "toolAvailability": _tool_availability(),
     }
 
 
@@ -159,6 +167,18 @@ def _safe(callback, fallback: str) -> str:
         return callback()
     except Exception:
         return fallback
+
+
+def _tool_availability() -> dict[str, dict[str, object]]:
+    return {
+        "codex": _command_status("codex"),
+        "claude": _command_status("claude"),
+    }
+
+
+def _command_status(command: str) -> dict[str, object]:
+    path = shutil.which(command)
+    return {"installed": path is not None, "path": path or ""}
 
 
 def _run_once(repo: Path, config: AppConfig) -> dict[str, object]:
@@ -333,6 +353,59 @@ HTML = r"""<!doctype html>
       line-height: 1.45;
     }
 
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .tool-card {
+      border: 1px solid #cbd3df;
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .tool-card[aria-pressed="true"] {
+      border-color: var(--accent);
+      background: var(--soft);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    .tool-card strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    .tool-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      width: fit-content;
+      margin-top: 8px;
+      border-radius: 999px;
+      padding: 0 8px;
+      background: #ecfdf3;
+      color: #067647;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .badge.missing {
+      background: #fff1f0;
+      color: var(--danger);
+    }
+
     .actions {
       display: flex;
       flex-wrap: wrap;
@@ -473,6 +546,8 @@ HTML = r"""<!doctype html>
             <label for="tool">CR 工具</label>
             <select id="tool">
               <option value="print">生成 Prompt 报告</option>
+              <option value="codex">Codex CLI 自动 CR</option>
+              <option value="claude">Claude Code 自动 CR</option>
               <option value="command">外部命令</option>
             </select>
           </div>
@@ -480,6 +555,32 @@ HTML = r"""<!doctype html>
           <div class="field">
             <label for="maxDiff">最大 diff 字符数</label>
             <input id="maxDiff" type="number" min="1000" step="1000" />
+          </div>
+
+          <div class="field wide">
+            <label>工具预设</label>
+            <div class="tool-grid">
+              <button class="tool-card" data-tool="codex" type="button">
+                <strong>Codex CLI</strong>
+                <span>使用 codex review 非交互执行 CR</span>
+                <em class="badge missing" id="codexBadge">检测中</em>
+              </button>
+              <button class="tool-card" data-tool="claude" type="button">
+                <strong>Claude Code</strong>
+                <span>使用 claude -p 输出 Review 报告</span>
+                <em class="badge missing" id="claudeBadge">检测中</em>
+              </button>
+              <button class="tool-card" data-tool="print" type="button">
+                <strong>Prompt 报告</strong>
+                <span>只生成给 AI 的 Prompt，不调用外部工具</span>
+                <em class="badge">内置</em>
+              </button>
+              <button class="tool-card" data-tool="command" type="button">
+                <strong>自定义命令</strong>
+                <span>接入公司内部 CR 工具或其它 CLI</span>
+                <em class="badge">可编辑</em>
+              </button>
+            </div>
           </div>
 
           <div class="field wide">
@@ -512,7 +613,7 @@ HTML = r"""<!doctype html>
         <div class="actions">
           <button class="primary" id="saveButton" type="button">保存配置</button>
           <button id="runButton" type="button">运行一次 CR</button>
-          <button id="hookButton" type="button">安装 commit hook</button>
+          <button id="hookButton" type="button">启用提交后自动 CR</button>
         </div>
         <div class="status" id="status">准备就绪</div>
       </section>
@@ -554,6 +655,16 @@ HTML = r"""<!doctype html>
       hookButton: document.querySelector("#hookButton")
     };
 
+    const recommendedCommands = {
+      codex: "codex review -",
+      claude: "claude -p --permission-mode dontAsk --output-format text",
+      command: "cat",
+      print: ""
+    };
+
+    const commandBackups = {};
+    let activeTool = "print";
+
     function lines(value) {
       return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     }
@@ -570,13 +681,19 @@ HTML = r"""<!doctype html>
     }
 
     function readConfig() {
+      const selectedTool = els.tool.value;
+      const codexCommand = selectedTool === "codex" ? els.command.value : commandBackups.codex;
+      const claudeCommand = selectedTool === "claude" ? els.command.value : commandBackups.claude;
+      const customCommand = selectedTool === "command" ? els.command.value : commandBackups.command;
       return {
         scope: els.scope.value,
         base_branch: els.base.value || "master",
-        tool: els.tool.value,
+        tool: selectedTool,
         tools: {
           print: { type: "print" },
-          command: { type: "command", command: els.command.value || "cat" }
+          codex: { type: "command", command: codexCommand || recommendedCommands.codex },
+          claude: { type: "command", command: claudeCommand || recommendedCommands.claude },
+          command: { type: "command", command: customCommand || recommendedCommands.command }
         },
         include: lines(els.include.value),
         exclude: lines(els.exclude.value),
@@ -586,6 +703,42 @@ HTML = r"""<!doctype html>
       };
     }
 
+    function selectedCommand(config) {
+      const tool = config.tool;
+      if (tool === "print") return "";
+      return (config.tools[tool] && config.tools[tool].command) || recommendedCommands[tool] || "cat";
+    }
+
+    function updateToolCards(tool, availability) {
+      for (const card of document.querySelectorAll(".tool-card")) {
+        card.setAttribute("aria-pressed", String(card.dataset.tool === tool));
+      }
+      setBadge("codexBadge", availability.codex);
+      setBadge("claudeBadge", availability.claude);
+    }
+
+    function setBadge(id, status) {
+      const badge = document.querySelector("#" + id);
+      const installed = status && status.installed;
+      badge.textContent = installed ? "已检测到" : "未安装";
+      badge.classList.toggle("missing", !installed);
+      badge.title = installed ? status.path : "PATH 中未找到";
+    }
+
+    function switchTool(tool) {
+      const previous = activeTool;
+      if (previous !== "print") {
+        commandBackups[previous] = els.command.value;
+      }
+      els.tool.value = tool;
+      els.command.value = commandBackups[tool] || recommendedCommands[tool] || "";
+      els.command.disabled = tool === "print";
+      activeTool = tool;
+      for (const card of document.querySelectorAll(".tool-card")) {
+        card.setAttribute("aria-pressed", String(card.dataset.tool === tool));
+      }
+    }
+
     function render(state) {
       const config = state.config;
       els.repo.value = state.repo;
@@ -593,8 +746,13 @@ HTML = r"""<!doctype html>
       els.scope.value = config.scope;
       els.base.value = config.base_branch;
       els.tool.value = config.tool;
+      activeTool = config.tool;
       els.maxDiff.value = config.max_diff_chars;
-      els.command.value = (config.tools.command && config.tools.command.command) || "cat";
+      commandBackups.codex = (config.tools.codex && config.tools.codex.command) || recommendedCommands.codex;
+      commandBackups.claude = (config.tools.claude && config.tools.claude.command) || recommendedCommands.claude;
+      commandBackups.command = (config.tools.command && config.tools.command.command) || recommendedCommands.command;
+      els.command.value = selectedCommand(config);
+      els.command.disabled = config.tool === "print";
       els.include.value = (config.include || []).join("\n");
       els.exclude.value = (config.exclude || []).join("\n");
       els.reportsDir.value = config.reports_dir;
@@ -609,6 +767,7 @@ HTML = r"""<!doctype html>
         option.value = branch;
         els.branches.appendChild(option);
       }
+      updateToolCards(config.tool, state.toolAvailability || {});
     }
 
     async function api(path, body) {
@@ -652,9 +811,13 @@ HTML = r"""<!doctype html>
     }
 
     els.refreshButton.addEventListener("click", load);
+    els.tool.addEventListener("change", () => switchTool(els.tool.value));
+    for (const card of document.querySelectorAll(".tool-card")) {
+      card.addEventListener("click", () => switchTool(card.dataset.tool));
+    }
     els.saveButton.addEventListener("click", () => post("/api/config", "配置已保存"));
     els.runButton.addEventListener("click", () => post("/api/review", "CR 已完成"));
-    els.hookButton.addEventListener("click", () => post("/api/hook", "Hook 已安装"));
+    els.hookButton.addEventListener("click", () => post("/api/hook", "提交后自动 CR 已启用"));
 
     load();
   </script>

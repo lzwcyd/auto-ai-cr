@@ -7,6 +7,8 @@ from typing import Any
 
 
 CONFIG_FILE = ".auto-ai-cr.json"
+CODEX_REVIEW_COMMAND = "codex review -"
+CLAUDE_REVIEW_COMMAND = "claude -p --permission-mode dontAsk --output-format text"
 
 
 @dataclass(frozen=True)
@@ -20,12 +22,7 @@ class AppConfig:
     scope: str = "latest_commit"
     base_branch: str = "master"
     tool: str = "print"
-    tools: dict[str, ToolConfig] = field(
-        default_factory=lambda: {
-            "print": ToolConfig(type="print"),
-            "command": ToolConfig(type="command", command="cat"),
-        }
-    )
+    tools: dict[str, ToolConfig] = field(default_factory=lambda: default_tools())
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     max_diff_chars: int = 120_000
@@ -34,19 +31,20 @@ class AppConfig:
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "AppConfig":
-        tools = {
+        tools = default_tools()
+        tools.update({
             name: ToolConfig(
                 type=str(value.get("type", name)),
                 command=value.get("command"),
             )
             for name, value in data.get("tools", {}).items()
-        }
+        })
         defaults = cls()
         return cls(
             scope=str(data.get("scope", defaults.scope)),
             base_branch=str(data.get("base_branch", defaults.base_branch)),
             tool=str(data.get("tool", defaults.tool)),
-            tools=tools or defaults.tools,
+            tools=tools,
             include=list(data.get("include", defaults.include)),
             exclude=list(data.get("exclude", defaults.exclude)),
             max_diff_chars=int(data.get("max_diff_chars", defaults.max_diff_chars)),
@@ -86,6 +84,15 @@ def load_config(repo: Path) -> AppConfig:
         return AppConfig()
     with config_path.open("r", encoding="utf-8") as fp:
         return AppConfig.from_mapping(json.load(fp))
+
+
+def default_tools() -> dict[str, ToolConfig]:
+    return {
+        "print": ToolConfig(type="print"),
+        "codex": ToolConfig(type="command", command=CODEX_REVIEW_COMMAND),
+        "claude": ToolConfig(type="command", command=CLAUDE_REVIEW_COMMAND),
+        "command": ToolConfig(type="command", command="cat"),
+    }
 
 
 def write_default_config(repo: Path, overwrite: bool = False) -> Path:

@@ -30,6 +30,14 @@ auto-ai-cr ui --open
     "print": {
       "type": "print"
     },
+    "codex": {
+      "type": "command",
+      "command": "codex review -"
+    },
+    "claude": {
+      "type": "command",
+      "command": "claude -p --permission-mode dontAsk --output-format text"
+    },
     "command": {
       "type": "command",
       "command": "cat"
@@ -51,8 +59,15 @@ auto-ai-cr ui --open
 auto-ai-cr ui --open
 ```
 
-配置页面可以保存 `.auto-ai-cr.json`、运行一次 CR、安装 commit hook。
+配置页面可以保存 `.auto-ai-cr.json`、运行一次 CR、启用提交后自动 CR。
 UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
+
+页面会自动检测本机是否安装了 `codex` 和 `claude`，并提供内置工具卡片：
+
+- Codex CLI：默认命令 `codex review -`
+- Claude Code：默认命令 `claude -p --permission-mode dontAsk --output-format text`
+- Prompt 报告：只生成 Review Prompt 和 diff
+- 自定义命令：接入内部 CR 工具或其它 CLI
 
 监听当前仓库 HEAD 变化：
 
@@ -96,6 +111,22 @@ auto-ai-cr run --scope staged
 ## 接入 CR 工具
 
 默认 `print` 工具会把 prompt 和 diff 写入报告文件，便于先验证范围是否正确。
+
+选择 Codex CLI：
+
+```json
+{
+  "tool": "codex"
+}
+```
+
+选择 Claude Code：
+
+```json
+{
+  "tool": "claude"
+}
+```
 
 你可以把 `.auto-ai-cr.json` 改成：
 

@@ -1,4 +1,4 @@
-from auto_ai_cr.web_ui import _ensure_loopback_host
+from auto_ai_cr.web_ui import _command_status, _ensure_loopback_host
 
 
 def test_ui_host_must_be_loopback():
@@ -13,3 +13,9 @@ def test_ui_host_rejects_public_bind_address():
         assert "loopback" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_command_status_reports_missing_command():
+    status = _command_status("definitely-not-a-real-auto-ai-cr-command")
+
+    assert status == {"installed": False, "path": ""}
