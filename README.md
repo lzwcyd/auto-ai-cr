@@ -16,7 +16,7 @@ source .venv/bin/activate
 pip install -e .
 
 auto-ai-cr init
-auto-ai-cr run
+auto-ai-cr ui --open
 ```
 
 初始化会生成 `.auto-ai-cr.json`：
@@ -44,6 +44,15 @@ auto-ai-cr run
 ```
 
 ## 运行模式
+
+打开本地配置页面：
+
+```bash
+auto-ai-cr ui --open
+```
+
+配置页面可以保存 `.auto-ai-cr.json`、运行一次 CR、安装 commit hook。
+UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 
 监听当前仓库 HEAD 变化：
 

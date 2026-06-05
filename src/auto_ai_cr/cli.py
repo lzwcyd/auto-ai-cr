@@ -8,6 +8,7 @@ from .config import AppConfig, load_config, write_default_config
 from .git_ops import DiffRequest, GitError, collect_diff, find_repo
 from .hooks import install_post_commit_hook
 from .reviewer import run_review
+from .web_ui import DEFAULT_PORT, serve_ui
 from .watcher import watch_head
 
 
@@ -40,6 +41,14 @@ def main(argv: list[str] | None = None) -> int:
             path = install_post_commit_hook(repo)
             print(f"installed {path}")
             return 0
+        if args.command == "ui":
+            serve_ui(
+                repo,
+                host=args.host,
+                port=args.port,
+                open_browser=args.open,
+            )
+            return 0
     except (GitError, FileExistsError, ValueError) as exc:
         print(f"auto-ai-cr: {exc}", file=sys.stderr)
         return 1
@@ -63,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     hook = subparsers.add_parser("install-hook", help="install git post-commit hook")
     hook.add_argument("--repo", help="repository path")
+
+    ui = subparsers.add_parser("ui", help="start the local configuration UI")
+    ui.add_argument("--repo", help="repository path")
+    ui.add_argument("--host", default="127.0.0.1", help="bind host")
+    ui.add_argument("--port", type=int, default=DEFAULT_PORT, help="bind port")
+    ui.add_argument("--open", action="store_true", help="open browser automatically")
     return parser
 
 

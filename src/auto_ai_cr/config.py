@@ -92,8 +92,14 @@ def write_default_config(repo: Path, overwrite: bool = False) -> Path:
     config_path = repo / CONFIG_FILE
     if config_path.exists() and not overwrite:
         raise FileExistsError(f"{config_path} already exists")
+    write_config(repo, AppConfig())
+    return config_path
+
+
+def write_config(repo: Path, config: AppConfig) -> Path:
+    config_path = repo / CONFIG_FILE
     config_path.write_text(
-        json.dumps(AppConfig().to_mapping(), indent=2, ensure_ascii=False) + "\n",
+        json.dumps(config.to_mapping(), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     return config_path
