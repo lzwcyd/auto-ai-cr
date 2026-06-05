@@ -8,7 +8,8 @@ def test_expected_trace2_target_points_to_auto_ai_cr_event_log():
 
     assert expected_trace2_target(repo) == str(monitor_socket_path(repo))
     assert str(monitor_socket_path(repo)).endswith("trace2-event.jsonl")
-    assert ".auto-ai-cr/daemon" in str(monitor_socket_path(repo))
+    assert ".auto-ai-cr" in monitor_socket_path(repo).parts
+    assert "daemon" in monitor_socket_path(repo).parts
 
 
 def test_monitor_label_is_global_daemon_label():
