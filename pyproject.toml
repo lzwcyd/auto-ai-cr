@@ -1,0 +1,18 @@
+[project]
+name = "auto-ai-cr"
+version = "0.1.0"
+description = "Local git commit listener that runs configurable AI code review."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+auto-ai-cr = "auto_ai_cr.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

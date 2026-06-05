@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import json
+from pathlib import Path
+from typing import Any
+
+
+CONFIG_FILE = ".auto-ai-cr.json"
+
+
+@dataclass(frozen=True)
+class ToolConfig:
+    type: str
+    command: str | None = None
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    scope: str = "latest_commit"
+    base_branch: str = "master"
+    tool: str = "print"
+    tools: dict[str, ToolConfig] = field(
+        default_factory=lambda: {
+            "print": ToolConfig(type="print"),
+            "command": ToolConfig(type="command", command="cat"),
+        }
+    )
+    include: list[str] = field(default_factory=list)
+    exclude: list[str] = field(default_factory=list)
+    max_diff_chars: int = 120_000
+    reports_dir: str = ".auto-ai-cr/reviews"
+    poll_interval_seconds: float = 2.0
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> "AppConfig":
+        tools = {
+            name: ToolConfig(
+                type=str(value.get("type", name)),
+                command=value.get("command"),
+            )
+            for name, value in data.get("tools", {}).items()
+        }
+        defaults = cls()
+        return cls(
+            scope=str(data.get("scope", defaults.scope)),
+            base_branch=str(data.get("base_branch", defaults.base_branch)),
+            tool=str(data.get("tool", defaults.tool)),
+            tools=tools or defaults.tools,
+            include=list(data.get("include", defaults.include)),
+            exclude=list(data.get("exclude", defaults.exclude)),
+            max_diff_chars=int(data.get("max_diff_chars", defaults.max_diff_chars)),
+            reports_dir=str(data.get("reports_dir", defaults.reports_dir)),
+            poll_interval_seconds=float(
+                data.get("poll_interval_seconds", defaults.poll_interval_seconds)
+            ),
+        )
+
+    def to_mapping(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "base_branch": self.base_branch,
+            "tool": self.tool,
+            "tools": {
+                name: {
+                    key: value
+                    for key, value in {
+                        "type": tool.type,
+                        "command": tool.command,
+                    }.items()
+                    if value is not None
+                }
+                for name, tool in self.tools.items()
+            },
+            "include": self.include,
+            "exclude": self.exclude,
+            "max_diff_chars": self.max_diff_chars,
+            "reports_dir": self.reports_dir,
+            "poll_interval_seconds": self.poll_interval_seconds,
+        }
+
+
+def load_config(repo: Path) -> AppConfig:
+    config_path = repo / CONFIG_FILE
+    if not config_path.exists():
+        return AppConfig()
+    with config_path.open("r", encoding="utf-8") as fp:
+        return AppConfig.from_mapping(json.load(fp))
+
+
+def write_default_config(repo: Path, overwrite: bool = False) -> Path:
+    config_path = repo / CONFIG_FILE
+    if config_path.exists() and not overwrite:
+        raise FileExistsError(f"{config_path} already exists")
+    config_path.write_text(
+        json.dumps(AppConfig().to_mapping(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return config_path
