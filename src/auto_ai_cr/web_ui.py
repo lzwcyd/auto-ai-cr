@@ -10,12 +10,16 @@ import webbrowser
 
 from .config import (
     CLAUDE_REVIEW_COMMAND,
+    CLAUDE_FIX_COMMAND,
     CODEX_REVIEW_COMMAND,
+    CODEX_FIX_COMMAND,
     CURSOR_REVIEW_COMMAND,
+    CURSOR_FIX_COMMAND,
     AppConfig,
     load_config,
     write_config,
 )
+from .fixer import issue_from_mapping, run_fix
 from .git_ops import (
     DiffRequest,
     GitError,
@@ -78,6 +82,19 @@ def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:
                     write_config(target, config)
                     review_repo = _review_repo(target, str(data.get("project") or ""))
                     result = _run_once(review_repo, config)
+                    self._json({"ok": True, **result, "state": _state(target, str(review_repo))})
+                    return
+                if self.path == "/api/fix":
+                    config = AppConfig.from_mapping(data["config"])
+                    write_config(target, config)
+                    review_repo = _review_repo(target, str(data.get("project") or ""))
+                    issues = [
+                        issue_from_mapping(issue)
+                        for issue in data.get("issues", [])
+                        if isinstance(issue, dict)
+                    ]
+                    report_path = str(data.get("reportPath") or "")
+                    result = _run_fix(review_repo, config, issues, report_path)
                     self._json({"ok": True, **result, "state": _state(target, str(review_repo))})
                     return
                 if self.path in {"/api/monitor", "/api/hook"}:
@@ -255,7 +272,30 @@ def _run_once(repo: Path, config: AppConfig) -> dict[str, object]:
     return {
         "message": f"Review finished: {result.report_path}",
         "reportPath": str(result.report_path),
+        "issuesPath": str(result.issues_path),
+        "issues": [issue.to_mapping() for issue in result.issues],
         "exitCode": result.exit_code,
+    }
+
+
+def _run_fix(
+    repo: Path,
+    config: AppConfig,
+    issues: list,
+    report_path: str,
+) -> dict[str, object]:
+    result = run_fix(
+        repo,
+        config,
+        issues,
+        Path(report_path).expanduser().resolve() if report_path else None,
+    )
+    return {
+        "message": f"Fix finished: {result.output_path}",
+        "fixReportPath": str(result.output_path),
+        "exitCode": result.exit_code,
+        "diff": result.diff,
+        "gitStatus": result.status,
     }
 
 
@@ -509,6 +549,88 @@ HTML = r"""<!doctype html>
       background: #fff1f0;
     }
 
+    .review-panel {
+      margin-top: 16px;
+      border-top: 1px solid var(--line);
+      padding-top: 16px;
+    }
+
+    .review-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .review-toolbar .field {
+      min-width: min(260px, 100%);
+    }
+
+    .issue-list {
+      display: grid;
+      gap: 10px;
+      margin: 12px 0;
+    }
+
+    .issue-card {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .issue-card input {
+      min-height: auto;
+      margin-top: 3px;
+    }
+
+    .issue-title {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 6px;
+      font-weight: 750;
+    }
+
+    .severity {
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: #eef2f6;
+      color: #344054;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .severity.critical { background: #fff1f0; color: #b42318; }
+    .severity.warning { background: #fff8e6; color: #93370d; }
+    .severity.suggestion { background: #eef7f4; color: #14584b; }
+
+    .issue-meta, .issue-body {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    .diff-box {
+      max-height: 360px;
+      overflow: auto;
+      border: 1px solid #cbd3df;
+      border-radius: 6px;
+      padding: 12px;
+      background: #101828;
+      color: #f2f4f7;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
     .facts {
       display: grid;
       gap: 12px;
@@ -685,6 +807,24 @@ HTML = r"""<!doctype html>
           <button id="hookButton" type="button">启用 auto-ai-cr daemon</button>
         </div>
         <div class="status" id="status">准备就绪</div>
+        <div class="review-panel" id="reviewPanel" hidden>
+          <h2 class="section-title">CR 问题与修复</h2>
+          <div class="review-toolbar">
+            <div class="field">
+              <label for="fixTool">修复 Agent</label>
+              <select id="fixTool">
+                <option value="codex">Codex</option>
+                <option value="claude">Claude Code</option>
+                <option value="cursor">Cursor Agent</option>
+                <option value="command">自定义命令</option>
+              </select>
+            </div>
+            <button id="fixButton" type="button">修复选中问题</button>
+          </div>
+          <div class="hint" id="reviewMeta"></div>
+          <div class="issue-list" id="issueList"></div>
+          <pre class="diff-box" id="fixDiff" hidden></pre>
+        </div>
       </section>
     </div>
 
@@ -720,6 +860,12 @@ HTML = r"""<!doctype html>
       reportsDir: document.querySelector("#reportsDir"),
       pollInterval: document.querySelector("#pollInterval"),
       status: document.querySelector("#status"),
+      reviewPanel: document.querySelector("#reviewPanel"),
+      reviewMeta: document.querySelector("#reviewMeta"),
+      issueList: document.querySelector("#issueList"),
+      fixTool: document.querySelector("#fixTool"),
+      fixButton: document.querySelector("#fixButton"),
+      fixDiff: document.querySelector("#fixDiff"),
       branch: document.querySelector("#branch"),
       head: document.querySelector("#head"),
       configPath: document.querySelector("#configPath"),
@@ -741,15 +887,23 @@ HTML = r"""<!doctype html>
       print: ""
     };
 
+    const recommendedFixCommands = {
+      codex: CODEX_FIX_COMMAND,
+      claude: CLAUDE_FIX_COMMAND,
+      cursor: CURSOR_FIX_COMMAND,
+      command: "cat"
+    };
+
     const commandBackups = {};
     let activeTool = "print";
+    let lastReview = null;
 
     function lines(value) {
       return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     }
 
     function setBusy(busy) {
-      for (const button of [els.refreshButton, els.saveButton, els.runButton, els.hookButton]) {
+      for (const button of [els.refreshButton, els.saveButton, els.runButton, els.hookButton, els.fixButton]) {
         button.disabled = busy;
       }
     }
@@ -769,12 +923,19 @@ HTML = r"""<!doctype html>
         scope: els.scope.value,
         base_branch: els.base.value || "master",
         tool: selectedTool,
+        fix_tool: els.fixTool.value || selectedTool,
         tools: {
           print: { type: "print" },
           codex: { type: "command", command: codexCommand || recommendedCommands.codex },
           claude: { type: "command", command: claudeCommand || recommendedCommands.claude },
           cursor: { type: "command", command: cursorCommand || recommendedCommands.cursor },
           command: { type: "command", command: customCommand || recommendedCommands.command }
+        },
+        fix_tools: {
+          codex: { type: "command", command: recommendedFixCommands.codex },
+          claude: { type: "command", command: recommendedFixCommands.claude },
+          cursor: { type: "command", command: recommendedFixCommands.cursor },
+          command: { type: "command", command: recommendedFixCommands.command }
         },
         include: lines(els.include.value),
         exclude: lines(els.exclude.value),
@@ -829,6 +990,7 @@ HTML = r"""<!doctype html>
       els.scope.value = config.scope;
       els.base.value = config.base_branch;
       els.tool.value = config.tool;
+      els.fixTool.value = config.fix_tool || (config.tool === "print" ? "codex" : config.tool);
       activeTool = config.tool;
       els.maxDiff.value = config.max_diff_chars;
       commandBackups.codex = (config.tools.codex && config.tools.codex.command) || recommendedCommands.codex;
@@ -915,7 +1077,96 @@ HTML = r"""<!doctype html>
       try {
         const data = await api(path, { repo: els.repo.value, project: els.project.value, config: readConfig() });
         if (data.state) render(data.state);
+        if (path === "/api/review") renderReviewResult(data);
         setStatus(data.message || success);
+      } catch (error) {
+        setStatus(error.message, true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    function renderReviewResult(data) {
+      lastReview = {
+        reportPath: data.reportPath,
+        issuesPath: data.issuesPath,
+        issues: data.issues || []
+      };
+      els.reviewPanel.hidden = false;
+      els.fixDiff.hidden = true;
+      els.fixDiff.textContent = "";
+      els.reviewMeta.textContent = data.reportPath
+        ? "报告：" + data.reportPath + "；问题数：" + lastReview.issues.length
+        : "没有生成报告";
+      renderIssues(lastReview.issues);
+    }
+
+    function renderIssues(issues) {
+      els.issueList.innerHTML = "";
+      if (!issues.length) {
+        const empty = document.createElement("div");
+        empty.className = "hint";
+        empty.textContent = "没有发现可选择的问题。";
+        els.issueList.appendChild(empty);
+        return;
+      }
+      for (const issue of issues) {
+        const card = document.createElement("label");
+        card.className = "issue-card";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = issue.id;
+        checkbox.checked = issue.severity !== "suggestion";
+        const body = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "issue-title";
+        const severity = document.createElement("span");
+        severity.className = "severity " + (issue.severity || "warning");
+        severity.textContent = issue.severity || "warning";
+        const titleText = document.createElement("span");
+        titleText.textContent = issue.id + " · " + issue.title;
+        title.append(severity, titleText);
+        const meta = document.createElement("div");
+        meta.className = "issue-meta";
+        meta.textContent = [issue.file, issue.line ? "L" + issue.line : ""].filter(Boolean).join(":");
+        const detail = document.createElement("div");
+        detail.className = "issue-body";
+        detail.textContent = issue.recommendation || issue.description || issue.risk || "";
+        body.append(title, meta, detail);
+        card.append(checkbox, body);
+        els.issueList.appendChild(card);
+      }
+    }
+
+    function selectedIssues() {
+      if (!lastReview) return [];
+      const checked = new Set(Array.from(els.issueList.querySelectorAll("input[type=checkbox]:checked")).map((input) => input.value));
+      return lastReview.issues.filter((issue) => checked.has(issue.id));
+    }
+
+    async function fixSelected() {
+      if (!lastReview) {
+        setStatus("请先运行一次 CR", true);
+        return;
+      }
+      const issues = selectedIssues();
+      if (!issues.length) {
+        setStatus("请选择至少一个问题", true);
+        return;
+      }
+      setBusy(true);
+      try {
+        const data = await api("/api/fix", {
+          repo: els.repo.value,
+          project: els.project.value,
+          config: readConfig(),
+          reportPath: lastReview.reportPath,
+          issues
+        });
+        if (data.state) render(data.state);
+        els.fixDiff.hidden = false;
+        els.fixDiff.textContent = data.diff || data.gitStatus || "(agent 没有产生工作区 diff)";
+        setStatus(data.message || "修复已完成");
       } catch (error) {
         setStatus(error.message, true);
       } finally {
@@ -933,6 +1184,7 @@ HTML = r"""<!doctype html>
     els.saveButton.addEventListener("click", () => post("/api/config", "配置已保存"));
     els.runButton.addEventListener("click", () => post("/api/review", "CR 已完成"));
     els.hookButton.addEventListener("click", () => post("/api/monitor", "auto-ai-cr daemon 已启用"));
+    els.fixButton.addEventListener("click", fixSelected);
 
     load();
   </script>
@@ -940,4 +1192,8 @@ HTML = r"""<!doctype html>
 </html>
 """.replace("CODEX_COMMAND", json.dumps(CODEX_REVIEW_COMMAND)).replace(
     "CLAUDE_COMMAND", json.dumps(CLAUDE_REVIEW_COMMAND)
-).replace("CURSOR_COMMAND", json.dumps(CURSOR_REVIEW_COMMAND))
+).replace("CURSOR_COMMAND", json.dumps(CURSOR_REVIEW_COMMAND)).replace(
+    "CODEX_FIX_COMMAND", json.dumps(CODEX_FIX_COMMAND)
+).replace("CLAUDE_FIX_COMMAND", json.dumps(CLAUDE_FIX_COMMAND)).replace(
+    "CURSOR_FIX_COMMAND", json.dumps(CURSOR_FIX_COMMAND)
+)

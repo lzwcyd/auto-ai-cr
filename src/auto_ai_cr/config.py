@@ -10,6 +10,9 @@ CONFIG_FILE = ".auto-ai-cr.json"
 CODEX_REVIEW_COMMAND = "codex review -"
 CLAUDE_REVIEW_COMMAND = "claude -p --permission-mode dontAsk --output-format text"
 CURSOR_REVIEW_COMMAND = "cursor-agent -p --output-format text"
+CODEX_FIX_COMMAND = "codex exec --sandbox workspace-write --ask-for-approval never -"
+CLAUDE_FIX_COMMAND = "claude -p --permission-mode acceptEdits --output-format text"
+CURSOR_FIX_COMMAND = "cursor-agent -p --output-format text --trust"
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,8 @@ class AppConfig:
     base_branch: str = "master"
     tool: str = "print"
     tools: dict[str, ToolConfig] = field(default_factory=lambda: default_tools())
+    fix_tool: str = "codex"
+    fix_tools: dict[str, ToolConfig] = field(default_factory=lambda: default_fix_tools())
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     max_diff_chars: int = 120_000
@@ -42,12 +47,22 @@ class AppConfig:
             )
             for name, value in data.get("tools", {}).items()
         })
+        fix_tools = default_fix_tools()
+        fix_tools.update({
+            name: ToolConfig(
+                type=str(value.get("type", name)),
+                command=value.get("command"),
+            )
+            for name, value in data.get("fix_tools", {}).items()
+        })
         defaults = cls()
         return cls(
             scope=str(data.get("scope", defaults.scope)),
             base_branch=str(data.get("base_branch", defaults.base_branch)),
             tool=str(data.get("tool", defaults.tool)),
             tools=tools,
+            fix_tool=str(data.get("fix_tool", defaults.fix_tool)),
+            fix_tools=fix_tools,
             include=list(data.get("include", defaults.include)),
             exclude=list(data.get("exclude", defaults.exclude)),
             max_diff_chars=int(data.get("max_diff_chars", defaults.max_diff_chars)),
@@ -75,6 +90,18 @@ class AppConfig:
                 }
                 for name, tool in self.tools.items()
             },
+            "fix_tool": self.fix_tool,
+            "fix_tools": {
+                name: {
+                    key: value
+                    for key, value in {
+                        "type": tool.type,
+                        "command": tool.command,
+                    }.items()
+                    if value is not None
+                }
+                for name, tool in self.fix_tools.items()
+            },
             "include": self.include,
             "exclude": self.exclude,
             "max_diff_chars": self.max_diff_chars,
@@ -99,6 +126,15 @@ def default_tools() -> dict[str, ToolConfig]:
         "codex": ToolConfig(type="command", command=CODEX_REVIEW_COMMAND),
         "claude": ToolConfig(type="command", command=CLAUDE_REVIEW_COMMAND),
         "cursor": ToolConfig(type="command", command=CURSOR_REVIEW_COMMAND),
+        "command": ToolConfig(type="command", command="cat"),
+    }
+
+
+def default_fix_tools() -> dict[str, ToolConfig]:
+    return {
+        "codex": ToolConfig(type="command", command=CODEX_FIX_COMMAND),
+        "claude": ToolConfig(type="command", command=CLAUDE_FIX_COMMAND),
+        "cursor": ToolConfig(type="command", command=CURSOR_FIX_COMMAND),
         "command": ToolConfig(type="command", command="cat"),
     }
 

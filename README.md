@@ -74,6 +74,25 @@ auto-ai-cr ui --open
       "command": "cat"
     }
   },
+  "fix_tool": "codex",
+  "fix_tools": {
+    "codex": {
+      "type": "command",
+      "command": "codex exec --sandbox workspace-write --ask-for-approval never -"
+    },
+    "claude": {
+      "type": "command",
+      "command": "claude -p --permission-mode acceptEdits --output-format text"
+    },
+    "cursor": {
+      "type": "command",
+      "command": "cursor-agent -p --output-format text --trust"
+    },
+    "command": {
+      "type": "command",
+      "command": "cat"
+    }
+  },
   "include": [],
   "exclude": [],
   "max_diff_chars": 120000,
@@ -102,6 +121,8 @@ UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 - Cursor Agent：默认命令 `cursor-agent -p --output-format text`
 - Prompt 报告：只生成 Review Prompt 和 diff
 - 自定义命令：接入内部 CR 工具或其它 CLI
+
+运行一次 CR 后，页面会展示结构化问题列表。你可以勾选要修复的问题，再选择 Codex、Claude Code、Cursor Agent 或自定义命令进行修复。修复 agent 只会收到你勾选的问题；完成后页面会展示当前工作区 diff，方便你确认后再决定是否提交。
 
 监听当前仓库 HEAD 变化：
 
@@ -233,6 +254,24 @@ auto-ai-cr run --scope staged
   "command": "internal-cr --repo {repo} --scope {scope} --out {report}"
 }
 ```
+
+## 选择问题并修复
+
+CR 工具会被要求在报告末尾输出一个 `auto-ai-cr-issues` JSON 代码块。`auto-ai-cr` 会把它保存为同名 `.issues.json` 文件，并在 UI 中渲染成可勾选的问题卡片。
+
+默认修复命令：
+
+- Codex：`codex exec --sandbox workspace-write --ask-for-approval never -`
+- Claude Code：`claude -p --permission-mode acceptEdits --output-format text`
+- Cursor Agent：`cursor-agent -p --output-format text --trust`
+
+修复阶段会通过 stdin 向 agent 发送：
+
+- 用户勾选的问题列表
+- 问题的文件、行号、风险和建议
+- 只修复选中问题、不要自动提交 commit 的约束
+
+修复完成后，UI 会展示 `git diff --stat --patch` 的结果。`auto-ai-cr` 不会自动 commit，最终是否保留或提交由你决定。
 
 ## 文件过滤
 

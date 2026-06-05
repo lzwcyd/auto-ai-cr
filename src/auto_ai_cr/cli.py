@@ -150,6 +150,8 @@ def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         base_branch=getattr(args, "base", None) or config.base_branch,
         tool=getattr(args, "tool", None) or config.tool,
         tools=config.tools,
+        fix_tool=config.fix_tool,
+        fix_tools=config.fix_tools,
         include=config.include,
         exclude=config.exclude,
         max_diff_chars=config.max_diff_chars,
@@ -177,6 +179,7 @@ def _run_once(repo: Path, config: AppConfig, commit_sha: str | None = None) -> i
         return 0
     result = run_review(repo, config, diff)
     print(f"review report: {result.report_path}")
+    print(f"review issues: {result.issues_path}")
     return result.exit_code
 
 
