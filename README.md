@@ -65,6 +65,10 @@ auto-ai-cr ui --open
       "type": "command",
       "command": "claude -p --permission-mode dontAsk --output-format text"
     },
+    "cursor": {
+      "type": "command",
+      "command": "cursor-agent -p --output-format text"
+    },
     "command": {
       "type": "command",
       "command": "cat"
@@ -91,10 +95,11 @@ UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 
 `仓库或项目目录` 可以填单个 Git 仓库，也可以填一个包含多个 Git 项目的上层目录。填上层目录时，配置会保存在该目录的 `.auto-ai-cr.json`，daemon 会监听该目录下的所有 Git 项目；手动运行 CR 时可在页面里选择具体项目。
 
-页面会自动检测本机是否安装了 `codex` 和 `claude`，并提供内置工具卡片：
+页面会自动检测本机是否安装了 `codex`、`claude` 和 `cursor-agent`，并提供内置工具卡片：
 
 - Codex CLI：默认命令 `codex review -`
 - Claude Code：默认命令 `claude -p --permission-mode dontAsk --output-format text`
+- Cursor Agent：默认命令 `cursor-agent -p --output-format text`
 - Prompt 报告：只生成 Review Prompt 和 diff
 - 自定义命令：接入内部 CR 工具或其它 CLI
 
@@ -186,6 +191,14 @@ auto-ai-cr run --scope staged
 ```json
 {
   "tool": "claude"
+}
+```
+
+选择 Cursor Agent CLI：
+
+```json
+{
+  "tool": "cursor"
 }
 ```
 

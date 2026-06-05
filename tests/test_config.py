@@ -18,4 +18,5 @@ def test_config_merges_default_ai_tool_presets():
 
     assert restored.tools["codex"].command == "codex review -"
     assert restored.tools["claude"].command.startswith("claude -p")
+    assert restored.tools["cursor"].command == "cursor-agent -p --output-format text"
     assert restored.tools["command"].command == "x"

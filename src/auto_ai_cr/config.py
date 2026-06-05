@@ -9,6 +9,7 @@ from typing import Any
 CONFIG_FILE = ".auto-ai-cr.json"
 CODEX_REVIEW_COMMAND = "codex review -"
 CLAUDE_REVIEW_COMMAND = "claude -p --permission-mode dontAsk --output-format text"
+CURSOR_REVIEW_COMMAND = "cursor-agent -p --output-format text"
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,7 @@ def default_tools() -> dict[str, ToolConfig]:
         "print": ToolConfig(type="print"),
         "codex": ToolConfig(type="command", command=CODEX_REVIEW_COMMAND),
         "claude": ToolConfig(type="command", command=CLAUDE_REVIEW_COMMAND),
+        "cursor": ToolConfig(type="command", command=CURSOR_REVIEW_COMMAND),
         "command": ToolConfig(type="command", command="cat"),
     }
 

@@ -11,6 +11,7 @@ import webbrowser
 from .config import (
     CLAUDE_REVIEW_COMMAND,
     CODEX_REVIEW_COMMAND,
+    CURSOR_REVIEW_COMMAND,
     AppConfig,
     load_config,
     write_config,
@@ -228,6 +229,7 @@ def _tool_availability() -> dict[str, dict[str, object]]:
     return {
         "codex": _command_status("codex"),
         "claude": _command_status("claude"),
+        "cursor": _command_status("cursor-agent"),
     }
 
 
@@ -609,6 +611,7 @@ HTML = r"""<!doctype html>
               <option value="print">生成 Prompt 报告</option>
               <option value="codex">Codex CLI 自动 CR</option>
               <option value="claude">Claude Code 自动 CR</option>
+              <option value="cursor">Cursor Agent 自动 CR</option>
               <option value="command">外部命令</option>
             </select>
           </div>
@@ -630,6 +633,11 @@ HTML = r"""<!doctype html>
                 <strong>Claude Code</strong>
                 <span>使用 claude -p 输出 Review 报告</span>
                 <em class="badge missing" id="claudeBadge">检测中</em>
+              </button>
+              <button class="tool-card" data-tool="cursor" type="button">
+                <strong>Cursor Agent</strong>
+                <span>使用 cursor-agent 非交互执行 CR</span>
+                <em class="badge missing" id="cursorBadge">检测中</em>
               </button>
               <button class="tool-card" data-tool="print" type="button">
                 <strong>Prompt 报告</strong>
@@ -726,8 +734,9 @@ HTML = r"""<!doctype html>
     };
 
     const recommendedCommands = {
-      codex: "codex review -",
-      claude: "claude -p --permission-mode dontAsk --output-format text",
+      codex: CODEX_COMMAND,
+      claude: CLAUDE_COMMAND,
+      cursor: CURSOR_COMMAND,
       command: "cat",
       print: ""
     };
@@ -754,6 +763,7 @@ HTML = r"""<!doctype html>
       const selectedTool = els.tool.value;
       const codexCommand = selectedTool === "codex" ? els.command.value : commandBackups.codex;
       const claudeCommand = selectedTool === "claude" ? els.command.value : commandBackups.claude;
+      const cursorCommand = selectedTool === "cursor" ? els.command.value : commandBackups.cursor;
       const customCommand = selectedTool === "command" ? els.command.value : commandBackups.command;
       return {
         scope: els.scope.value,
@@ -763,6 +773,7 @@ HTML = r"""<!doctype html>
           print: { type: "print" },
           codex: { type: "command", command: codexCommand || recommendedCommands.codex },
           claude: { type: "command", command: claudeCommand || recommendedCommands.claude },
+          cursor: { type: "command", command: cursorCommand || recommendedCommands.cursor },
           command: { type: "command", command: customCommand || recommendedCommands.command }
         },
         include: lines(els.include.value),
@@ -785,6 +796,7 @@ HTML = r"""<!doctype html>
       }
       setBadge("codexBadge", availability.codex);
       setBadge("claudeBadge", availability.claude);
+      setBadge("cursorBadge", availability.cursor);
     }
 
     function setBadge(id, status) {
@@ -821,6 +833,7 @@ HTML = r"""<!doctype html>
       els.maxDiff.value = config.max_diff_chars;
       commandBackups.codex = (config.tools.codex && config.tools.codex.command) || recommendedCommands.codex;
       commandBackups.claude = (config.tools.claude && config.tools.claude.command) || recommendedCommands.claude;
+      commandBackups.cursor = (config.tools.cursor && config.tools.cursor.command) || recommendedCommands.cursor;
       commandBackups.command = (config.tools.command && config.tools.command.command) || recommendedCommands.command;
       els.command.value = selectedCommand(config);
       els.command.disabled = config.tool === "print";
@@ -925,4 +938,6 @@ HTML = r"""<!doctype html>
   </script>
 </body>
 </html>
-"""
+""".replace("CODEX_COMMAND", json.dumps(CODEX_REVIEW_COMMAND)).replace(
+    "CLAUDE_COMMAND", json.dumps(CLAUDE_REVIEW_COMMAND)
+).replace("CURSOR_COMMAND", json.dumps(CURSOR_REVIEW_COMMAND))
