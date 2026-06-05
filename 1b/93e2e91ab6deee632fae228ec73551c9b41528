@@ -1,0 +1,36 @@
+src/auto_ai_cr/cli.py
+  s_536afd64d0e83c::t_e06366f5e189d3 31,133,147-148,152,161
+  s_536afd64d0e83c::t_7633012c8d3d5f 10,45-63,96-114
+src/auto_ai_cr/git_ops.py
+  s_536afd64d0e83c::t_6acdd367e605cf 78,120,122
+  s_536afd64d0e83c::t_90b7c112efcc87 22,76-77,88
+src/auto_ai_cr/monitor.py
+  s_536afd64d0e83c::t_b854a0edb50345 1-266
+tests/test_monitor.py
+  s_536afd64d0e83c::t_00bb311226d30d 1-21
+README.md
+  s_536afd64d0e83c::t_00bb311226d30d 3,7,62,78-102
+src/auto_ai_cr/web_ui.py
+  s_536afd64d0e83c::t_771ec2c5fe30c2 27,83,87-88,144,154,618,630-632,656-657,769-771
+  s_536afd64d0e83c::t_8824762375d167 80,828
+src/auto_ai_cr/config.py
+  s_536afd64d0e83c::t_90b7c112efcc87 31-32,57-58,82-83
+src/auto_ai_cr/reviewer.py
+  s_536afd64d0e83c::t_90b7c112efcc87 10,59,62-64,123-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1b93e2e91ab6deee632fae228ec73551c9b41528",
+  "prompts": {},
+  "sessions": {
+    "s_536afd64d0e83c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e968d-a51c-71d3-b520-9e8f5f6c55b6",
+        "model": "x5/gpt-5.5"
+      },
+      "human_author": "lzwcyd <lzwcyd@users.noreply.github.com>"
+    }
+  }
+}
