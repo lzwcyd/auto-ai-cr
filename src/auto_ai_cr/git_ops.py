@@ -51,6 +51,13 @@ def find_repo(start: Path) -> Path:
     return Path(output.strip()).resolve()
 
 
+def try_find_repo(start: Path) -> Path | None:
+    try:
+        return find_repo(start)
+    except Exception:
+        return None
+
+
 def head_sha(repo: Path) -> str:
     return run_git(repo, ["rev-parse", "HEAD"]).strip()
 

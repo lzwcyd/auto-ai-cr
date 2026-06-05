@@ -24,12 +24,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"created {path}")
             return 0
 
-        repo = find_repo(Path(args.repo).resolve() if args.repo else Path.cwd())
-        config = _override(load_config(repo), args)
-
         if args.command == "run":
+            repo = find_repo(Path(args.repo).resolve() if args.repo else Path.cwd())
+            config_root = Path(args.config_root).expanduser().resolve() if args.config_root else repo
+            config = _override(load_config(config_root), args)
             return _run_once(repo, config, commit_sha=args.commit)
         if args.command == "watch":
+            repo = find_repo(Path(args.repo).resolve() if args.repo else Path.cwd())
+            config = _override(load_config(repo), args)
             print(f"watching {repo}")
 
             def on_change(sha: str) -> None:
@@ -39,20 +41,24 @@ def main(argv: list[str] | None = None) -> int:
             watch_head(repo, config, on_change)
             return 0
         if args.command == "install-hook":
+            repo = find_repo(Path(args.repo).resolve() if args.repo else Path.cwd())
             path = install_post_commit_hook(repo)
             print(f"installed {path}")
             return 0
         if args.command == "install-monitor":
-            status = install_monitor(repo)
+            target = Path(args.repo).expanduser().resolve() if args.repo else Path.cwd()
+            status = install_monitor(target)
             print(f"installed {status.plist_path}")
             print(f"running: {status.running}")
             return 0
         if args.command == "uninstall-monitor":
-            status = uninstall_monitor(repo)
+            target = Path(args.repo).expanduser().resolve() if args.repo else Path.cwd()
+            status = uninstall_monitor(target)
             print(f"removed {status.plist_path}")
             return 0
         if args.command == "monitor-status":
-            status = monitor_status(repo)
+            target = Path(args.repo).expanduser().resolve() if args.repo else Path.cwd()
+            status = monitor_status(target)
             print(f"installed: {status.installed}")
             print(f"running: {status.running}")
             print(f"label: {status.label}")
@@ -61,10 +67,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"expected trace2: {status.expected_trace2_target}")
             return 0
         if args.command == "monitor":
-            return run_monitor(repo, once=args.once, poll_seconds=args.poll_interval)
+            target = Path(args.repo).expanduser().resolve() if args.repo else None
+            return run_monitor(target, once=args.once, poll_seconds=args.poll_interval)
         if args.command == "ui":
+            target = Path(args.repo).expanduser().resolve() if args.repo else Path.cwd()
             serve_ui(
-                repo,
+                target,
                 host=args.host,
                 port=args.port,
                 open_browser=args.open,
@@ -132,6 +140,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--base", help="base branch for branch_diff")
     parser.add_argument("--tool", help="review tool name from config")
     parser.add_argument("--commit", help="commit sha to review")
+    parser.add_argument("--config-root", help="directory to load .auto-ai-cr.json from")
 
 
 def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:

@@ -62,6 +62,8 @@ auto-ai-cr ui --open
 配置页面可以保存 `.auto-ai-cr.json`、运行一次 CR、启用 auto-ai-cr daemon。
 UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 
+`仓库或项目目录` 可以填单个 Git 仓库，也可以填一个包含多个 Git 项目的上层目录。填上层目录时，配置会保存在该目录的 `.auto-ai-cr.json`，daemon 会监听该目录下的所有 Git 项目；手动运行 CR 时可在页面里选择具体项目。
+
 页面会自动检测本机是否安装了 `codex` 和 `claude`，并提供内置工具卡片：
 
 - Codex CLI：默认命令 `codex review -`
@@ -79,6 +81,12 @@ auto-ai-cr watch
 
 ```bash
 auto-ai-cr install-monitor
+```
+
+也可以监听一个项目目录下的所有仓库：
+
+```bash
+auto-ai-cr install-monitor --repo ~/code/github
 ```
 
 启用后链路是：

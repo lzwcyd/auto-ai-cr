@@ -23,6 +23,7 @@ from .git_ops import (
     find_repo,
     head_sha,
     run_git,
+    try_find_repo,
 )
 from .monitor import install_monitor, monitor_status
 from .reviewer import run_review
@@ -38,8 +39,7 @@ def serve_ui(
     open_browser: bool = False,
 ) -> None:
     _ensure_loopback_host(host)
-    root_repo = find_repo(repo)
-    handler = _handler(root_repo)
+    handler = _handler(repo.expanduser().resolve())
     server = ThreadingHTTPServer((host, port), handler)
     url = f"http://{host}:{server.server_port}"
     print(f"auto-ai-cr ui: {url}")
@@ -57,36 +57,38 @@ def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:
                 return
             if parsed.path == "/api/state":
                 params = parse_qs(parsed.query)
-                repo = _repo_from_value(default_repo, params.get("repo", [""])[0])
-                self._json(_state(repo))
+                target = _target_from_value(default_repo, params.get("repo", [""])[0])
+                project = params.get("project", [""])[0]
+                self._json(_state(target, project))
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
             try:
                 data = self._read_json()
-                repo = _repo_from_payload(default_repo, data)
+                target = _target_from_payload(default_repo, data)
                 if self.path == "/api/config":
                     config = AppConfig.from_mapping(data["config"])
-                    write_config(repo, config)
-                    self._json({"ok": True, "state": _state(repo)})
+                    write_config(target, config)
+                    self._json({"ok": True, "state": _state(target, str(data.get("project") or ""))})
                     return
                 if self.path == "/api/review":
                     config = AppConfig.from_mapping(data["config"])
-                    write_config(repo, config)
-                    result = _run_once(repo, config)
-                    self._json({"ok": True, **result, "state": _state(repo)})
+                    write_config(target, config)
+                    review_repo = _review_repo(target, str(data.get("project") or ""))
+                    result = _run_once(review_repo, config)
+                    self._json({"ok": True, **result, "state": _state(target, str(review_repo))})
                     return
                 if self.path in {"/api/monitor", "/api/hook"}:
                     config = AppConfig.from_mapping(data["config"])
-                    write_config(repo, config)
-                    status = install_monitor(repo)
+                    write_config(target, config)
+                    status = install_monitor(target)
                     self._json(
                         {
                             "ok": True,
                             "message": "auto-ai-cr daemon 已启用",
                             "monitor": status.to_mapping(),
-                            "state": _state(repo),
+                            "state": _state(target, str(data.get("project") or "")),
                         }
                     )
                     return
@@ -130,30 +132,81 @@ def _ensure_loopback_host(host: str) -> None:
         raise ValueError("UI server only supports loopback hosts: 127.0.0.1, localhost, ::1")
 
 
-def _repo_from_payload(default_repo: Path, data: dict[str, object]) -> Path:
-    return _repo_from_value(default_repo, str(data.get("repo") or ""))
+def _target_from_payload(default_repo: Path, data: dict[str, object]) -> Path:
+    return _target_from_value(default_repo, str(data.get("repo") or ""))
 
 
-def _repo_from_value(default_repo: Path, value: str) -> Path:
-    repo_value = value or str(default_repo)
-    return find_repo(Path(repo_value).expanduser().resolve())
+def _target_from_value(default_repo: Path, value: str) -> Path:
+    target_value = value or str(default_repo)
+    target = Path(target_value).expanduser().resolve()
+    if not target.exists():
+        raise ValueError(f"path does not exist: {target}")
+    repo = try_find_repo(target)
+    if repo is not None:
+        return repo
+    if target.is_dir():
+        return target
+    raise ValueError(f"path is not a git repository or directory: {target}")
 
 
-def _state(repo: Path) -> dict[str, object]:
-    config = load_config(repo)
-    monitor = monitor_status(repo)
+def _state(target: Path, selected_project: str = "") -> dict[str, object]:
+    target = _target_from_value(target, str(target))
+    projects = _discover_projects(target)
+    selected_repo = _select_project(target, projects, selected_project)
+    config = load_config(target)
+    monitor = monitor_status(target)
     return {
-        "repo": str(repo),
+        "repo": str(target),
+        "targetType": "repo" if try_find_repo(target) == target else "folder",
+        "projects": [{"path": str(path), "name": path.name} for path in projects],
+        "selectedProject": str(selected_repo) if selected_repo else "",
         "config": config.to_mapping(),
         "git": {
-            "branch": _safe(lambda: current_branch(repo), "unknown"),
-            "head": _safe(lambda: head_sha(repo), "unknown"),
-            "branches": _branches(repo),
-            "configPath": str(repo / ".auto-ai-cr.json"),
+            "branch": _safe(lambda: current_branch(selected_repo), "unknown") if selected_repo else "-",
+            "head": _safe(lambda: head_sha(selected_repo), "unknown") if selected_repo else "-",
+            "branches": _branches(selected_repo) if selected_repo else [],
+            "configPath": str(target / ".auto-ai-cr.json"),
         },
         "monitor": monitor.to_mapping(),
         "toolAvailability": _tool_availability(),
     }
+
+
+def _discover_projects(target: Path) -> list[Path]:
+    repo = try_find_repo(target)
+    if repo is not None and repo == target:
+        return [repo]
+    projects: list[Path] = []
+    if not target.is_dir():
+        return projects
+    skip = {".git", "node_modules", ".venv", "venv", "dist", "build", "__pycache__"}
+    for child in sorted(target.iterdir()):
+        if not child.is_dir() or child.name in skip or child.name.startswith("."):
+            continue
+        repo = try_find_repo(child)
+        if repo is not None and repo == child.resolve():
+            projects.append(repo)
+    return projects
+
+
+def _select_project(target: Path, projects: list[Path], selected_project: str) -> Path | None:
+    if not projects:
+        repo = try_find_repo(target)
+        return repo if repo == target else None
+    if selected_project:
+        selected = Path(selected_project).expanduser().resolve()
+        for project in projects:
+            if project == selected:
+                return project
+    return projects[0]
+
+
+def _review_repo(target: Path, selected_project: str) -> Path:
+    projects = _discover_projects(target)
+    repo = _select_project(target, projects, selected_project)
+    if repo is None:
+        raise ValueError("请选择一个 Git 项目后再运行 CR")
+    return repo
 
 
 def _branches(repo: Path) -> list[str]:
@@ -524,8 +577,14 @@ HTML = r"""<!doctype html>
         <h2 class="section-title">Review 配置</h2>
         <div class="grid">
           <div class="field wide">
-            <label for="repo">仓库路径</label>
+            <label for="repo">仓库或项目目录</label>
             <input id="repo" autocomplete="off" />
+          </div>
+
+          <div class="field wide" id="projectField">
+            <label for="project">项目</label>
+            <select id="project"></select>
+            <div class="hint">目录下有多个 Git 项目时，在这里选择要手动运行 CR 的项目；daemon 会监听该目录下所有项目。</div>
           </div>
 
           <div class="field">
@@ -538,7 +597,7 @@ HTML = r"""<!doctype html>
             </select>
           </div>
 
-          <div class="field">
+          <div class="field" id="baseField">
             <label for="base">对比分支</label>
             <input id="base" list="branches" placeholder="master" />
             <datalist id="branches"></datalist>
@@ -638,9 +697,12 @@ HTML = r"""<!doctype html>
   <script>
     const els = {
       repo: document.querySelector("#repo"),
+      project: document.querySelector("#project"),
+      projectField: document.querySelector("#projectField"),
       repoLabel: document.querySelector("#repoLabel"),
       scope: document.querySelector("#scope"),
       base: document.querySelector("#base"),
+      baseField: document.querySelector("#baseField"),
       branches: document.querySelector("#branches"),
       tool: document.querySelector("#tool"),
       maxDiff: document.querySelector("#maxDiff"),
@@ -751,6 +813,7 @@ HTML = r"""<!doctype html>
       const config = state.config;
       els.repo.value = state.repo;
       els.repoLabel.textContent = state.repo;
+      renderProjects(state.projects || [], state.selectedProject || "");
       els.scope.value = config.scope;
       els.base.value = config.base_branch;
       els.tool.value = config.tool;
@@ -779,6 +842,24 @@ HTML = r"""<!doctype html>
         els.branches.appendChild(option);
       }
       updateToolCards(config.tool, state.toolAvailability || {});
+      syncScopeFields();
+    }
+
+    function renderProjects(projects, selectedProject) {
+      els.project.innerHTML = "";
+      for (const project of projects) {
+        const option = document.createElement("option");
+        option.value = project.path;
+        option.textContent = project.name + " — " + project.path;
+        option.selected = project.path === selectedProject;
+        els.project.appendChild(option);
+      }
+      els.projectField.style.display = projects.length > 1 ? "grid" : "none";
+    }
+
+    function syncScopeFields() {
+      const needsBase = els.scope.value === "branch_diff";
+      els.baseField.style.display = needsBase ? "grid" : "none";
     }
 
     function monitorText(monitor) {
@@ -805,7 +886,8 @@ HTML = r"""<!doctype html>
       setBusy(true);
       try {
         const repo = encodeURIComponent(els.repo.value || "");
-        const data = await api("/api/state?repo=" + repo);
+        const project = encodeURIComponent(els.project.value || "");
+        const data = await api("/api/state?repo=" + repo + "&project=" + project);
         render(data);
         setStatus("配置已加载");
       } catch (error) {
@@ -818,7 +900,7 @@ HTML = r"""<!doctype html>
     async function post(path, success) {
       setBusy(true);
       try {
-        const data = await api(path, { repo: els.repo.value, config: readConfig() });
+        const data = await api(path, { repo: els.repo.value, project: els.project.value, config: readConfig() });
         if (data.state) render(data.state);
         setStatus(data.message || success);
       } catch (error) {
@@ -829,6 +911,8 @@ HTML = r"""<!doctype html>
     }
 
     els.refreshButton.addEventListener("click", load);
+    els.project.addEventListener("change", load);
+    els.scope.addEventListener("change", syncScopeFields);
     els.tool.addEventListener("change", () => switchTool(els.tool.value));
     for (const card of document.querySelectorAll(".tool-card")) {
       card.addEventListener("click", () => switchTool(card.dataset.tool));

@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from .git_ops import find_repo, run_git
+from .git_ops import find_repo, run_git, try_find_repo
 
 
 STATE_ROOT = Path.home() / ".auto-ai-cr/daemon"
@@ -34,6 +34,7 @@ class MonitorStatus:
     trace2_target: str
     expected_trace2_target: str
     repo_watched: bool
+    target_type: str
 
     def to_mapping(self) -> dict[str, object]:
         return {
@@ -46,6 +47,7 @@ class MonitorStatus:
             "trace2Target": self.trace2_target,
             "expectedTrace2Target": self.expected_trace2_target,
             "repoWatched": self.repo_watched,
+            "targetType": self.target_type,
         }
 
 
@@ -85,10 +87,10 @@ def run_monitor(repo: Path | None = None, once: bool = False, poll_seconds: floa
 
 
 def install_monitor(repo: Path) -> MonitorStatus:
-    repo = find_repo(repo)
+    target_type, target_path = _resolve_watch_target(repo)
     STATE_ROOT.mkdir(parents=True, exist_ok=True)
     _remember_previous_trace2_target()
-    _add_watched_repo(repo)
+    _add_watched_target(target_type, target_path)
 
     plist_path = monitor_plist_path(repo)
     plist_path.parent.mkdir(parents=True, exist_ok=True)
@@ -109,47 +111,49 @@ def install_monitor(repo: Path) -> MonitorStatus:
     with plist_path.open("wb") as fp:
         plistlib.dump(payload, fp)
 
-    run_git(repo, ["config", "--global", "trace2.eventtarget", expected_trace2_target()])
+    run_git(Path.cwd(), ["config", "--global", "trace2.eventtarget", expected_trace2_target()])
     _launchctl(["bootout", _launch_domain(), str(plist_path)], check=False)
     _launchctl(["bootstrap", _launch_domain(), str(plist_path)], check=False)
     _launchctl(["kickstart", "-k", f"{_launch_domain()}/{LAUNCH_LABEL}"], check=False)
-    return monitor_status(repo)
+    return monitor_status(target_path)
 
 
 def uninstall_monitor(repo: Path) -> MonitorStatus:
-    repo = find_repo(repo)
-    _remove_watched_repo(repo)
+    target_type, target_path = _resolve_watch_target(repo)
+    _remove_watched_target(target_type, target_path)
     state = _load_state()
-    if not state.get("watchedRepos"):
-        plist_path = monitor_plist_path(repo)
+    if not state.get("watchedRepos") and not state.get("watchedRoots"):
+        plist_path = monitor_plist_path(target_path)
         if plist_path.exists():
             _launchctl(["bootout", _launch_domain(), str(plist_path)], check=False)
             plist_path.unlink()
         if _trace2_target() == expected_trace2_target():
             previous = str(state.get("previousTrace2Target") or "")
             if previous:
-                run_git(repo, ["config", "--global", "trace2.eventtarget", previous], check=False)
+                run_git(Path.cwd(), ["config", "--global", "trace2.eventtarget", previous], check=False)
             else:
-                run_git(repo, ["config", "--global", "--unset", "trace2.eventtarget"], check=False)
+                run_git(Path.cwd(), ["config", "--global", "--unset", "trace2.eventtarget"], check=False)
         if SOCKET_PATH.exists():
             SOCKET_PATH.unlink()
-    return monitor_status(repo)
+    return monitor_status(target_path)
 
 
 def monitor_status(repo: Path) -> MonitorStatus:
-    repo = find_repo(repo)
+    target_type, target_path = _resolve_watch_target(repo)
     state = _load_state()
-    watched = str(repo.resolve()) in state.get("watchedRepos", [])
+    watched_key = "watchedRepos" if target_type == "repo" else "watchedRoots"
+    watched = str(target_path.resolve()) in state.get(watched_key, [])
     return MonitorStatus(
-        installed=monitor_plist_path(repo).exists(),
+        installed=monitor_plist_path(target_path).exists(),
         running=_is_launch_agent_running(LAUNCH_LABEL),
         label=LAUNCH_LABEL,
-        plist_path=monitor_plist_path(repo),
+        plist_path=monitor_plist_path(target_path),
         state_path=STATE_PATH,
         socket_path=SOCKET_PATH,
         trace2_target=_trace2_target(),
         expected_trace2_target=expected_trace2_target(),
         repo_watched=watched,
+        target_type=target_type,
     )
 
 
@@ -233,11 +237,33 @@ def _watched_repo_for_worktree(worktree: Path) -> Path | None:
         resolved = worktree.resolve()
     except Exception:
         return None
-    for repo in _load_state().get("watchedRepos", []):
+    state = _load_state()
+    for repo in state.get("watchedRepos", []):
         repo_path = Path(repo).resolve()
         if repo_path == resolved:
             return repo_path
+    for root in state.get("watchedRoots", []):
+        root_path = Path(root).resolve()
+        try:
+            resolved.relative_to(root_path)
+        except ValueError:
+            continue
+        repo_path = try_find_repo(resolved)
+        if repo_path and repo_path == resolved:
+            return repo_path
     return None
+
+
+def _config_root_for_repo(repo: Path) -> Path:
+    state = _load_state()
+    for root in state.get("watchedRoots", []):
+        root_path = Path(root).resolve()
+        try:
+            repo.resolve().relative_to(root_path)
+        except ValueError:
+            continue
+        return root_path
+    return repo
 
 
 def _trigger_review(repo: Path, sha: str) -> None:
@@ -263,6 +289,8 @@ def _trigger_review(repo: Path, sha: str) -> None:
             "latest_commit",
             "--commit",
             sha,
+            "--config-root",
+            str(_config_root_for_repo(repo)),
         ],
         cwd=repo,
         env=env,
@@ -273,19 +301,21 @@ def _trigger_review(repo: Path, sha: str) -> None:
     )
 
 
-def _add_watched_repo(repo: Path) -> None:
+def _add_watched_target(target_type: str, path: Path) -> None:
     state = _load_state()
-    watched = set(state.setdefault("watchedRepos", []))
-    watched.add(str(repo.resolve()))
-    state["watchedRepos"] = sorted(watched)
+    key = "watchedRepos" if target_type == "repo" else "watchedRoots"
+    watched = set(state.setdefault(key, []))
+    watched.add(str(path.resolve()))
+    state[key] = sorted(watched)
     _save_state(state)
 
 
-def _remove_watched_repo(repo: Path) -> None:
+def _remove_watched_target(target_type: str, path: Path) -> None:
     state = _load_state()
-    watched = set(state.setdefault("watchedRepos", []))
-    watched.discard(str(repo.resolve()))
-    state["watchedRepos"] = sorted(watched)
+    key = "watchedRepos" if target_type == "repo" else "watchedRoots"
+    watched = set(state.setdefault(key, []))
+    watched.discard(str(path.resolve()))
+    state[key] = sorted(watched)
     _save_state(state)
 
 
@@ -299,15 +329,26 @@ def _remember_previous_trace2_target() -> None:
 
 def _load_state() -> dict[str, object]:
     if not STATE_PATH.exists():
-        return {"watchedRepos": [], "processed": {}, "startedAt": _now()}
+        return {"watchedRepos": [], "watchedRoots": [], "processed": {}, "startedAt": _now()}
     try:
         with STATE_PATH.open("r", encoding="utf-8") as fp:
             state = json.load(fp)
     except Exception:
-        return {"watchedRepos": [], "processed": {}, "startedAt": _now()}
+        return {"watchedRepos": [], "watchedRoots": [], "processed": {}, "startedAt": _now()}
     state.setdefault("watchedRepos", [])
+    state.setdefault("watchedRoots", [])
     state.setdefault("processed", {})
     return state
+
+
+def _resolve_watch_target(path: Path) -> tuple[str, Path]:
+    path = path.expanduser().resolve()
+    repo = try_find_repo(path)
+    if repo is not None:
+        return "repo", repo
+    if path.is_dir():
+        return "root", path
+    raise ValueError(f"path does not exist: {path}")
 
 
 def _save_state(state: dict[str, object]) -> None:

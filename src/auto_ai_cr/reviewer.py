@@ -17,6 +17,7 @@ class ReviewResult:
 
 
 def build_prompt(repo: Path, diff: DiffResult) -> str:
+    base_line = f"Base：{diff.base_branch}\n" if diff.scope == "branch_diff" else ""
     return f"""你是资深代码审查助手。请对下面 Git diff 做 Code Review。
 
 优先级：
@@ -32,8 +33,7 @@ def build_prompt(repo: Path, diff: DiffResult) -> str:
 
 仓库：{repo}
 范围：{diff.scope}
-Base：{diff.base_branch}
-HEAD：{diff.head_sha}
+{base_line}HEAD：{diff.head_sha}
 主题：{diff.subject}
 Diff 是否截断：{"是" if diff.truncated else "否"}
 
