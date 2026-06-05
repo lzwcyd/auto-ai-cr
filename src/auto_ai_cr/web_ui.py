@@ -84,7 +84,7 @@ def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:
                     self._json(
                         {
                             "ok": True,
-                            "message": "git-ai Trace2 监听已启用",
+                            "message": "auto-ai-cr daemon 已启用",
                             "monitor": status.to_mapping(),
                             "state": _state(repo),
                         }
@@ -615,7 +615,7 @@ HTML = r"""<!doctype html>
         <div class="actions">
           <button class="primary" id="saveButton" type="button">保存配置</button>
           <button id="runButton" type="button">运行一次 CR</button>
-          <button id="hookButton" type="button">启用 git-ai 提交监听</button>
+          <button id="hookButton" type="button">启用 auto-ai-cr daemon</button>
         </div>
         <div class="status" id="status">准备就绪</div>
       </section>
@@ -627,8 +627,9 @@ HTML = r"""<!doctype html>
         <div class="fact"><span>分支</span><strong id="branch">-</strong></div>
         <div class="fact"><span>HEAD</span><code id="head">-</code></div>
         <div class="fact"><span>配置文件</span><code id="configPath">-</code></div>
-        <div class="fact"><span>git-ai 监听</span><strong id="hookState">-</strong></div>
+        <div class="fact"><span>auto-ai-cr daemon</span><strong id="hookState">-</strong></div>
         <div class="fact"><span>Trace2</span><code id="trace2State">-</code></div>
+        <div class="fact"><span>Socket</span><code id="socketPath">-</code></div>
         <div class="fact"><span>LaunchAgent</span><code id="monitorPath">-</code></div>
       </div>
     </aside>
@@ -654,6 +655,7 @@ HTML = r"""<!doctype html>
       configPath: document.querySelector("#configPath"),
       hookState: document.querySelector("#hookState"),
       trace2State: document.querySelector("#trace2State"),
+      socketPath: document.querySelector("#socketPath"),
       monitorPath: document.querySelector("#monitorPath"),
       refreshButton: document.querySelector("#refreshButton"),
       saveButton: document.querySelector("#saveButton"),
@@ -766,8 +768,9 @@ HTML = r"""<!doctype html>
       els.branch.textContent = state.git.branch;
       els.head.textContent = state.git.head;
       els.configPath.textContent = state.git.configPath;
-      els.hookState.textContent = state.monitor.running ? "运行中" : (state.monitor.installed ? "已安装，未运行" : "未启用");
+      els.hookState.textContent = monitorText(state.monitor);
       els.trace2State.textContent = state.monitor.trace2Target || "未配置";
+      els.socketPath.textContent = state.monitor.socketPath;
       els.monitorPath.textContent = state.monitor.plistPath;
       els.branches.innerHTML = "";
       for (const branch of state.git.branches) {
@@ -776,6 +779,13 @@ HTML = r"""<!doctype html>
         els.branches.appendChild(option);
       }
       updateToolCards(config.tool, state.toolAvailability || {});
+    }
+
+    function monitorText(monitor) {
+      if (monitor.running && monitor.repoWatched) return "运行中";
+      if (monitor.running) return "daemon 运行中，本仓库未启用";
+      if (monitor.installed && monitor.repoWatched) return "已安装，未运行";
+      return "未启用";
     }
 
     async function api(path, body) {
@@ -825,7 +835,7 @@ HTML = r"""<!doctype html>
     }
     els.saveButton.addEventListener("click", () => post("/api/config", "配置已保存"));
     els.runButton.addEventListener("click", () => post("/api/review", "CR 已完成"));
-    els.hookButton.addEventListener("click", () => post("/api/monitor", "git-ai Trace2 监听已启用"));
+    els.hookButton.addEventListener("click", () => post("/api/monitor", "auto-ai-cr daemon 已启用"));
 
     load();
   </script>

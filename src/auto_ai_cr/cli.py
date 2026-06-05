@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"running: {status.running}")
             print(f"label: {status.label}")
             print(f"trace2: {status.trace2_target}")
-            print(f"git-ai logs: {status.git_ai_log_dir}")
+            print(f"socket: {status.socket_path}")
+            print(f"expected trace2: {status.expected_trace2_target}")
             return 0
         if args.command == "monitor":
             return run_monitor(repo, once=args.once, poll_seconds=args.poll_interval)
@@ -94,21 +95,21 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument("--repo", help="repository path")
 
     install_monitor_parser = subparsers.add_parser(
-        "install-monitor", help="install git-ai Trace2 monitor"
+        "install-monitor", help="install auto-ai-cr Trace2 daemon"
     )
     install_monitor_parser.add_argument("--repo", help="repository path")
 
     uninstall_monitor_parser = subparsers.add_parser(
-        "uninstall-monitor", help="uninstall git-ai Trace2 monitor"
+        "uninstall-monitor", help="uninstall auto-ai-cr Trace2 daemon"
     )
     uninstall_monitor_parser.add_argument("--repo", help="repository path")
 
     monitor_status_parser = subparsers.add_parser(
-        "monitor-status", help="show git-ai Trace2 monitor status"
+        "monitor-status", help="show auto-ai-cr Trace2 daemon status"
     )
     monitor_status_parser.add_argument("--repo", help="repository path")
 
-    monitor = subparsers.add_parser("monitor", help="run git-ai Trace2 monitor")
+    monitor = subparsers.add_parser("monitor", help="run auto-ai-cr Trace2 daemon")
     monitor.add_argument("--repo", help="repository path")
     monitor.add_argument("--once", action="store_true", help="scan once and exit")
     monitor.add_argument("--poll-interval", type=float, default=2.0)

@@ -1,17 +1,13 @@
 from pathlib import Path
 
-from auto_ai_cr.monitor import COMMIT_RE, monitor_label, repo_key
+from auto_ai_cr.monitor import expected_trace2_target, monitor_label, monitor_socket_path, repo_key
 
 
-def test_commit_event_regex_extracts_repo_and_sha():
-    sha = "a" * 40
-    line = f'git write op completed op="commit" repo=/tmp/repo new_head={sha}'
+def test_expected_trace2_target_points_to_auto_ai_cr_socket():
+    repo = Path("/tmp/example")
 
-    match = COMMIT_RE.search(line)
-
-    assert match
-    assert match.group("repo") == "/tmp/repo"
-    assert match.group("sha") == sha
+    assert expected_trace2_target(repo) == f"af_unix:stream:{monitor_socket_path(repo)}"
+    assert ".auto-ai-cr/daemon" in str(monitor_socket_path(repo))
 
 
 def test_monitor_label_is_stable_for_repo_path():
