@@ -28,6 +28,8 @@ class AppConfig:
     max_diff_chars: int = 120_000
     reports_dir: str = ".auto-ai-cr/reviews"
     poll_interval_seconds: float = 2.0
+    write_notes: bool = True
+    note_ref: str = "codex-cr"
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "AppConfig":
@@ -52,6 +54,8 @@ class AppConfig:
             poll_interval_seconds=float(
                 data.get("poll_interval_seconds", defaults.poll_interval_seconds)
             ),
+            write_notes=bool(data.get("write_notes", defaults.write_notes)),
+            note_ref=str(data.get("note_ref", defaults.note_ref)),
         )
 
     def to_mapping(self) -> dict[str, Any]:
@@ -75,6 +79,8 @@ class AppConfig:
             "max_diff_chars": self.max_diff_chars,
             "reports_dir": self.reports_dir,
             "poll_interval_seconds": self.poll_interval_seconds,
+            "write_notes": self.write_notes,
+            "note_ref": self.note_ref,
         }
 
 

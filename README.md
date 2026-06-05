@@ -1,10 +1,10 @@
 # auto-ai-cr
 
-本地 Git 提交监听 + 自动 AI Code Review 的 MVP。
+本地 Git 提交监听 + 自动 AI Code Review。
 
 它解决三个问题：
 
-- 监听本机仓库的 commit：支持 `watch` 轮询 HEAD，也支持安装 `post-commit` hook。
+- 监听本机仓库的 commit：推荐复用 `git-ai daemon + Git Trace2` 的 commit 成功事件，也保留手动运行能力。
 - 选择 CR 范围：最新 commit、当前分支相对 master/main/指定分支的 diff、工作区 diff、暂存区 diff。
 - 选择 CR 工具：内置 `print` 输出，也支持任意命令模板，例如 Codex、Claude、OpenAI CLI 或内部 CR 服务。
 
@@ -59,7 +59,7 @@ auto-ai-cr ui --open
 auto-ai-cr ui --open
 ```
 
-配置页面可以保存 `.auto-ai-cr.json`、运行一次 CR、启用提交后自动 CR。
+配置页面可以保存 `.auto-ai-cr.json`、运行一次 CR、启用 git-ai 提交监听。
 UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 
 页面会自动检测本机是否安装了 `codex` 和 `claude`，并提供内置工具卡片：
@@ -75,7 +75,31 @@ UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 auto-ai-cr watch
 ```
 
-安装 Git post-commit hook：
+启用 git-ai Trace2 monitor：
+
+```bash
+auto-ai-cr install-monitor
+```
+
+启用后链路是：
+
+```text
+git commit 成功
+-> Git Trace2 发送事件到 git-ai daemon
+-> git-ai daemon 日志出现 op="commit" new_head=<sha>
+-> auto-ai-cr monitor 监听到该 commit
+-> 按当前配置调用 Codex CLI / Claude Code / 自定义命令
+-> 写报告到 .auto-ai-cr/reviews
+-> 写入本地 refs/notes/codex-cr
+```
+
+查看状态：
+
+```bash
+auto-ai-cr monitor-status
+```
+
+底层仍保留 Git post-commit hook 方式，主要用于没有 git-ai/Trace2 的环境：
 
 ```bash
 auto-ai-cr install-hook

@@ -24,7 +24,7 @@ from .git_ops import (
     head_sha,
     run_git,
 )
-from .hooks import install_post_commit_hook
+from .monitor import install_monitor, monitor_status
 from .reviewer import run_review
 
 
@@ -77,14 +77,15 @@ def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:
                     result = _run_once(repo, config)
                     self._json({"ok": True, **result, "state": _state(repo)})
                     return
-                if self.path == "/api/hook":
+                if self.path in {"/api/monitor", "/api/hook"}:
                     config = AppConfig.from_mapping(data["config"])
                     write_config(repo, config)
-                    hook_path = install_post_commit_hook(repo)
+                    status = install_monitor(repo)
                     self._json(
                         {
                             "ok": True,
-                            "message": f"Hook installed: {hook_path}",
+                            "message": "git-ai Trace2 监听已启用",
+                            "monitor": status.to_mapping(),
                             "state": _state(repo),
                         }
                     )
@@ -140,6 +141,7 @@ def _repo_from_value(default_repo: Path, value: str) -> Path:
 
 def _state(repo: Path) -> dict[str, object]:
     config = load_config(repo)
+    monitor = monitor_status(repo)
     return {
         "repo": str(repo),
         "config": config.to_mapping(),
@@ -147,9 +149,9 @@ def _state(repo: Path) -> dict[str, object]:
             "branch": _safe(lambda: current_branch(repo), "unknown"),
             "head": _safe(lambda: head_sha(repo), "unknown"),
             "branches": _branches(repo),
-            "hookInstalled": (repo / ".git" / "hooks" / "post-commit").exists(),
             "configPath": str(repo / ".auto-ai-cr.json"),
         },
+        "monitor": monitor.to_mapping(),
         "toolAvailability": _tool_availability(),
     }
 
@@ -613,7 +615,7 @@ HTML = r"""<!doctype html>
         <div class="actions">
           <button class="primary" id="saveButton" type="button">保存配置</button>
           <button id="runButton" type="button">运行一次 CR</button>
-          <button id="hookButton" type="button">启用提交后自动 CR</button>
+          <button id="hookButton" type="button">启用 git-ai 提交监听</button>
         </div>
         <div class="status" id="status">准备就绪</div>
       </section>
@@ -625,7 +627,9 @@ HTML = r"""<!doctype html>
         <div class="fact"><span>分支</span><strong id="branch">-</strong></div>
         <div class="fact"><span>HEAD</span><code id="head">-</code></div>
         <div class="fact"><span>配置文件</span><code id="configPath">-</code></div>
-        <div class="fact"><span>commit hook</span><strong id="hookState">-</strong></div>
+        <div class="fact"><span>git-ai 监听</span><strong id="hookState">-</strong></div>
+        <div class="fact"><span>Trace2</span><code id="trace2State">-</code></div>
+        <div class="fact"><span>LaunchAgent</span><code id="monitorPath">-</code></div>
       </div>
     </aside>
   </main>
@@ -649,6 +653,8 @@ HTML = r"""<!doctype html>
       head: document.querySelector("#head"),
       configPath: document.querySelector("#configPath"),
       hookState: document.querySelector("#hookState"),
+      trace2State: document.querySelector("#trace2State"),
+      monitorPath: document.querySelector("#monitorPath"),
       refreshButton: document.querySelector("#refreshButton"),
       saveButton: document.querySelector("#saveButton"),
       runButton: document.querySelector("#runButton"),
@@ -760,7 +766,9 @@ HTML = r"""<!doctype html>
       els.branch.textContent = state.git.branch;
       els.head.textContent = state.git.head;
       els.configPath.textContent = state.git.configPath;
-      els.hookState.textContent = state.git.hookInstalled ? "已安装" : "未安装";
+      els.hookState.textContent = state.monitor.running ? "运行中" : (state.monitor.installed ? "已安装，未运行" : "未启用");
+      els.trace2State.textContent = state.monitor.trace2Target || "未配置";
+      els.monitorPath.textContent = state.monitor.plistPath;
       els.branches.innerHTML = "";
       for (const branch of state.git.branches) {
         const option = document.createElement("option");
@@ -817,7 +825,7 @@ HTML = r"""<!doctype html>
     }
     els.saveButton.addEventListener("click", () => post("/api/config", "配置已保存"));
     els.runButton.addEventListener("click", () => post("/api/review", "CR 已完成"));
-    els.hookButton.addEventListener("click", () => post("/api/hook", "提交后自动 CR 已启用"));
+    els.hookButton.addEventListener("click", () => post("/api/monitor", "git-ai Trace2 监听已启用"));
 
     load();
   </script>

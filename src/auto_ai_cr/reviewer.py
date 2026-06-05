@@ -7,7 +7,7 @@ import shlex
 import subprocess
 
 from .config import AppConfig, ToolConfig
-from .git_ops import DiffResult
+from .git_ops import DiffResult, run_git
 
 
 @dataclass(frozen=True)
@@ -56,9 +56,12 @@ def run_review(repo: Path, config: AppConfig, diff: DiffResult) -> ReviewResult:
     prompt = build_prompt(repo, diff)
     if tool.type == "print":
         report_path.write_text(prompt, encoding="utf-8")
+        _write_notes(repo, config, diff, report_path)
         return ReviewResult(report_path=report_path, exit_code=0)
     if tool.type == "command":
-        return _run_command_tool(repo, tool, diff, prompt, report_path)
+        result = _run_command_tool(repo, tool, diff, prompt, report_path)
+        _write_notes(repo, config, diff, report_path)
+        return result
     raise ValueError(f"unsupported tool type: {tool.type}")
 
 
@@ -117,3 +120,23 @@ def _render_command_template(command: str, values: dict[str, str]) -> str:
     for key, value in values.items():
         rendered = rendered.replace("{" + key + "}", value)
     return rendered
+
+
+def _write_notes(repo: Path, config: AppConfig, diff: DiffResult, report_path: Path) -> None:
+    if not config.write_notes or not config.note_ref:
+        return
+    try:
+        run_git(
+            repo,
+            [
+                "notes",
+                f"--ref={config.note_ref}",
+                "add",
+                "-f",
+                "-F",
+                str(report_path),
+                diff.head_sha,
+            ],
+        )
+    except Exception:
+        return

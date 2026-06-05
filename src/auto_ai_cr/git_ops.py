@@ -19,6 +19,7 @@ class DiffRequest:
     include: list[str]
     exclude: list[str]
     max_diff_chars: int
+    commit_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,9 @@ def collect_diff(repo: Path, request: DiffRequest) -> DiffResult:
         raise ValueError(f"unknown scope: {request.scope}")
 
     sha = head_sha(repo)
-    subject = _subject(repo, request.scope, request.base_branch)
+    if request.commit_sha:
+        sha = run_git(repo, ["rev-parse", request.commit_sha]).strip()
+    subject = _subject(repo, request.scope, request.base_branch, sha)
     pathspec = _pathspec_args(request.include, request.exclude)
 
     if request.scope == "latest_commit":
@@ -82,7 +85,7 @@ def collect_diff(repo: Path, request: DiffRequest) -> DiffResult:
             "--stat",
             "--patch",
             "--format=fuller",
-            "HEAD",
+            sha,
             *pathspec,
         ]
     elif request.scope == "branch_diff":
@@ -114,9 +117,9 @@ def collect_diff(repo: Path, request: DiffRequest) -> DiffResult:
     )
 
 
-def _subject(repo: Path, scope: str, base_branch: str) -> str:
+def _subject(repo: Path, scope: str, base_branch: str, commit_sha: str) -> str:
     if scope == "latest_commit":
-        return run_git(repo, ["log", "-1", "--pretty=%s"]).strip()
+        return run_git(repo, ["log", "-1", "--pretty=%s", commit_sha]).strip()
     if scope == "branch_diff":
         branch = current_branch(repo)
         return f"{branch} vs {base_branch}"

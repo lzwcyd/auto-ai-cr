@@ -7,6 +7,7 @@ import sys
 from .config import AppConfig, load_config, write_default_config
 from .git_ops import DiffRequest, GitError, collect_diff, find_repo
 from .hooks import install_post_commit_hook
+from .monitor import install_monitor, monitor_status, run_monitor, uninstall_monitor
 from .reviewer import run_review
 from .web_ui import DEFAULT_PORT, serve_ui
 from .watcher import watch_head
@@ -27,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
         config = _override(load_config(repo), args)
 
         if args.command == "run":
-            return _run_once(repo, config)
+            return _run_once(repo, config, commit_sha=args.commit)
         if args.command == "watch":
             print(f"watching {repo}")
 
@@ -41,6 +42,25 @@ def main(argv: list[str] | None = None) -> int:
             path = install_post_commit_hook(repo)
             print(f"installed {path}")
             return 0
+        if args.command == "install-monitor":
+            status = install_monitor(repo)
+            print(f"installed {status.plist_path}")
+            print(f"running: {status.running}")
+            return 0
+        if args.command == "uninstall-monitor":
+            status = uninstall_monitor(repo)
+            print(f"removed {status.plist_path}")
+            return 0
+        if args.command == "monitor-status":
+            status = monitor_status(repo)
+            print(f"installed: {status.installed}")
+            print(f"running: {status.running}")
+            print(f"label: {status.label}")
+            print(f"trace2: {status.trace2_target}")
+            print(f"git-ai logs: {status.git_ai_log_dir}")
+            return 0
+        if args.command == "monitor":
+            return run_monitor(repo, once=args.once, poll_seconds=args.poll_interval)
         if args.command == "ui":
             serve_ui(
                 repo,
@@ -73,6 +93,26 @@ def build_parser() -> argparse.ArgumentParser:
     hook = subparsers.add_parser("install-hook", help="install git post-commit hook")
     hook.add_argument("--repo", help="repository path")
 
+    install_monitor_parser = subparsers.add_parser(
+        "install-monitor", help="install git-ai Trace2 monitor"
+    )
+    install_monitor_parser.add_argument("--repo", help="repository path")
+
+    uninstall_monitor_parser = subparsers.add_parser(
+        "uninstall-monitor", help="uninstall git-ai Trace2 monitor"
+    )
+    uninstall_monitor_parser.add_argument("--repo", help="repository path")
+
+    monitor_status_parser = subparsers.add_parser(
+        "monitor-status", help="show git-ai Trace2 monitor status"
+    )
+    monitor_status_parser.add_argument("--repo", help="repository path")
+
+    monitor = subparsers.add_parser("monitor", help="run git-ai Trace2 monitor")
+    monitor.add_argument("--repo", help="repository path")
+    monitor.add_argument("--once", action="store_true", help="scan once and exit")
+    monitor.add_argument("--poll-interval", type=float, default=2.0)
+
     ui = subparsers.add_parser("ui", help="start the local configuration UI")
     ui.add_argument("--repo", help="repository path")
     ui.add_argument("--host", default="127.0.0.1", help="bind host")
@@ -90,6 +130,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--base", help="base branch for branch_diff")
     parser.add_argument("--tool", help="review tool name from config")
+    parser.add_argument("--commit", help="commit sha to review")
 
 
 def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:
@@ -103,10 +144,12 @@ def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         max_diff_chars=config.max_diff_chars,
         reports_dir=config.reports_dir,
         poll_interval_seconds=config.poll_interval_seconds,
+        write_notes=config.write_notes,
+        note_ref=config.note_ref,
     )
 
 
-def _run_once(repo: Path, config: AppConfig) -> int:
+def _run_once(repo: Path, config: AppConfig, commit_sha: str | None = None) -> int:
     diff = collect_diff(
         repo,
         DiffRequest(
@@ -115,6 +158,7 @@ def _run_once(repo: Path, config: AppConfig) -> int:
             include=config.include,
             exclude=config.exclude,
             max_diff_chars=config.max_diff_chars,
+            commit_sha=commit_sha,
         ),
     )
     if not diff.diff.strip():
