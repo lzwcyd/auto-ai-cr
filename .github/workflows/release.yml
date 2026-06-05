@@ -25,7 +25,7 @@ jobs:
           - os: ubuntu-latest
             asset: auto-ai-cr-linux-x64.tar.gz
             binary: auto-ai-cr
-          - os: macos-13
+          - os: macos-15-intel
             asset: auto-ai-cr-macos-x64.tar.gz
             binary: auto-ai-cr
           - os: macos-14
