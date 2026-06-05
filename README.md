@@ -10,6 +10,20 @@
 
 ## 快速开始
 
+一行安装：
+
+```bash
+curl -fsSL https://github.com/lzwcyd/auto-ai-cr/releases/latest/download/install.sh | bash
+```
+
+启动配置页面：
+
+```bash
+auto-ai-cr ui --open
+```
+
+源码安装：
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate

@@ -1,6 +1,7 @@
 .auto-ai-cr/
 .pytest_cache/
 .venv/
+dist/
 __pycache__/
 *.py[cod]
 *.egg-info/
