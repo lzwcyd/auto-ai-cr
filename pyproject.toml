@@ -1,6 +1,6 @@
 [project]
 name = "auto-ai-cr"
-version = "0.5.0"
+version = "0.5.1"
 description = "Local git commit listener that runs configurable AI code review."
 readme = "README.md"
 requires-python = ">=3.10"

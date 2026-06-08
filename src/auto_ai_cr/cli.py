@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 
+from . import __version__
 from .config import AppConfig, load_config, write_default_config
 from .git_ops import DiffRequest, GitError, collect_diff, find_repo
 from .hooks import install_post_commit_hook
@@ -23,6 +24,9 @@ from .watcher import watch_head
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "help":
+        return _print_help(parser, args.topic)
 
     try:
         if args.command == "init":
@@ -96,46 +100,80 @@ def main(argv: list[str] | None = None) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="auto-ai-cr")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="show version and exit",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    command_parsers: dict[str, argparse.ArgumentParser] = {}
 
     init = subparsers.add_parser("init", help="create .auto-ai-cr.json")
+    command_parsers["init"] = init
     init.add_argument("--force", action="store_true", help="overwrite existing config")
 
     run = subparsers.add_parser("run", help="run one review")
+    command_parsers["run"] = run
     _add_common_args(run)
 
     watch = subparsers.add_parser("watch", help="watch HEAD changes and review commits")
+    command_parsers["watch"] = watch
     _add_common_args(watch)
 
     hook = subparsers.add_parser("install-hook", help="install git post-commit hook")
+    command_parsers["install-hook"] = hook
     hook.add_argument("--repo", help="repository path")
 
     install_monitor_parser = subparsers.add_parser(
         "install-monitor", help="install auto-ai-cr Trace2 daemon"
     )
+    command_parsers["install-monitor"] = install_monitor_parser
     install_monitor_parser.add_argument("--repo", help="repository path")
 
     uninstall_monitor_parser = subparsers.add_parser(
         "uninstall-monitor", help="uninstall auto-ai-cr Trace2 daemon"
     )
+    command_parsers["uninstall-monitor"] = uninstall_monitor_parser
     uninstall_monitor_parser.add_argument("--repo", help="repository path")
 
     monitor_status_parser = subparsers.add_parser(
         "monitor-status", help="show auto-ai-cr Trace2 daemon status"
     )
+    command_parsers["monitor-status"] = monitor_status_parser
     monitor_status_parser.add_argument("--repo", help="repository path")
 
     monitor = subparsers.add_parser("monitor", help="run auto-ai-cr Trace2 daemon")
+    command_parsers["monitor"] = monitor
     monitor.add_argument("--repo", help="repository path")
     monitor.add_argument("--once", action="store_true", help="scan once and exit")
     monitor.add_argument("--poll-interval", type=float, default=2.0)
 
     ui = subparsers.add_parser("ui", help="start the local configuration UI")
+    command_parsers["ui"] = ui
     ui.add_argument("--repo", help="repository path")
     ui.add_argument("--host", default="127.0.0.1", help="bind host")
     ui.add_argument("--port", type=int, default=DEFAULT_PORT, help="bind port")
     ui.add_argument("--open", action="store_true", help="open browser automatically")
+
+    help_parser = subparsers.add_parser("help", help="show help for auto-ai-cr or a command")
+    help_parser.add_argument("topic", nargs="?", help="command name")
+    command_parsers["help"] = help_parser
+    setattr(parser, "command_parsers", command_parsers)
     return parser
+
+
+def _print_help(parser: argparse.ArgumentParser, topic: str | None) -> int:
+    command_parsers = getattr(parser, "command_parsers", {})
+    if not topic:
+        parser.print_help()
+        return 0
+    topic_parser = command_parsers.get(topic)
+    if topic_parser is None:
+        print(f"auto-ai-cr: unknown help topic: {topic}", file=sys.stderr)
+        return 1
+    topic_parser.print_help()
+    return 0
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:

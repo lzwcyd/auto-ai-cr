@@ -34,6 +34,8 @@ Windows Git Bash 也可以使用 `install.sh`。Release 会自动提供这些二
 启动配置页面：
 
 ```bash
+auto-ai-cr --version
+auto-ai-cr help
 auto-ai-cr ui --open
 ```
 
