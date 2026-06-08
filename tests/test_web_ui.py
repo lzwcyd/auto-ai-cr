@@ -1,6 +1,11 @@
+import socket
+
 from auto_ai_cr.web_ui import (
+    _candidate_ports,
     _command_status,
+    _create_ui_server,
     _ensure_loopback_host,
+    _handler,
     _job_status_from_result,
     _merge_recent_reviews,
     _read_report,
@@ -111,3 +116,23 @@ def test_read_report_rejects_non_review_files(tmp_path):
       assert "auto-ai-cr" in str(exc)
     else:
       raise AssertionError("expected ValueError")
+
+
+def test_candidate_ports_fall_back_after_requested_port():
+    assert _candidate_ports(8765, 3) == [8765, 8766, 8767, 8768]
+    assert _candidate_ports(0, 3) == [0]
+
+
+def test_create_ui_server_uses_next_port_when_requested_port_is_busy(tmp_path):
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", 0))
+    busy.listen(1)
+    busy_port = busy.getsockname()[1]
+
+    server = _create_ui_server(_handler(tmp_path), "127.0.0.1", busy_port, fallback_count=20)
+    try:
+        assert server.server_port != busy_port
+        assert busy_port < server.server_port <= busy_port + 20
+    finally:
+        server.server_close()
+        busy.close()

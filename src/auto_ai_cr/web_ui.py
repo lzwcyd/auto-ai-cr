@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -68,12 +69,39 @@ def serve_ui(
 ) -> None:
     _ensure_loopback_host(host)
     handler = _handler(repo.expanduser().resolve())
-    server = ThreadingHTTPServer((host, port), handler)
+    server = _create_ui_server(handler, host, port)
     url = f"http://{host}:{server.server_port}"
+    if port != 0 and server.server_port != port:
+        print(f"auto-ai-cr ui: port {port} is busy; using {server.server_port}")
     print(f"auto-ai-cr ui: {url}")
     if open_browser:
         webbrowser.open(url)
     server.serve_forever()
+
+
+def _create_ui_server(
+    handler: type[BaseHTTPRequestHandler],
+    host: str,
+    port: int,
+    fallback_count: int = 20,
+) -> ThreadingHTTPServer:
+    last_error: OSError | None = None
+    for candidate in _candidate_ports(port, fallback_count):
+        try:
+            return ThreadingHTTPServer((host, candidate), handler)
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+            last_error = exc
+    tried = ", ".join(str(candidate) for candidate in _candidate_ports(port, fallback_count))
+    detail = f"; last error: {last_error}" if last_error else ""
+    raise ValueError(f"UI port is already in use. Tried: {tried}{detail}")
+
+
+def _candidate_ports(port: int, fallback_count: int) -> list[int]:
+    if port == 0:
+        return [0]
+    return [port + offset for offset in range(max(1, fallback_count + 1))]
 
 
 def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:

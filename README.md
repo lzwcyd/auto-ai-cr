@@ -39,6 +39,12 @@ auto-ai-cr help
 auto-ai-cr ui --open
 ```
 
+默认 UI 端口是 `8765`；如果端口已被占用，会自动尝试后续端口。也可以手动指定：
+
+```bash
+auto-ai-cr ui --open --port 8766
+```
+
 源码安装：
 
 ```bash
