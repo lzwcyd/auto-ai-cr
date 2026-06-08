@@ -90,7 +90,7 @@ def _create_ui_server(
         try:
             return ThreadingHTTPServer((host, candidate), handler)
         except OSError as exc:
-            if exc.errno != errno.EADDRINUSE:
+            if not _is_port_unavailable_error(exc):
                 raise
             last_error = exc
     tried = ", ".join(str(candidate) for candidate in _candidate_ports(port, fallback_count))
@@ -102,6 +102,11 @@ def _candidate_ports(port: int, fallback_count: int) -> list[int]:
     if port == 0:
         return [0]
     return [port + offset for offset in range(max(1, fallback_count + 1))]
+
+
+def _is_port_unavailable_error(exc: OSError) -> bool:
+    windows_error = getattr(exc, "winerror", None)
+    return exc.errno in {errno.EADDRINUSE, errno.EACCES} or windows_error in {10013, 10048}
 
 
 def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:
