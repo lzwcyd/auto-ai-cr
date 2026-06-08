@@ -172,6 +172,7 @@ def _run_command_tool(
         command,
         cwd=repo,
         shell=True,
+        env=_command_environment(command),
         input=prompt,
         text=True,
         stdout=subprocess.PIPE,
@@ -245,6 +246,38 @@ def _ensure_command_available(command: str) -> None:
     raise ValueError(
         f"找不到 CR 工具 `{executable}`。请先安装它，或在 UI 的“外部命令”里配置完整路径。"
     )
+
+
+def _command_environment(command: str, base_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(base_env or os.environ)
+    executable_dir = _command_executable_dir(command)
+    if executable_dir is None:
+        return env
+    path_key = _path_env_key(env)
+    current_path = env.get(path_key, "")
+    executable_dir_text = str(executable_dir)
+    parts = [part for part in current_path.split(os.pathsep) if part and part != executable_dir_text]
+    env[path_key] = os.pathsep.join([executable_dir_text, *parts])
+    return env
+
+
+def _command_executable_dir(command: str) -> Path | None:
+    executable = _first_command_token(command)
+    if not executable:
+        return None
+    if "/" in executable or "\\" in executable:
+        path = Path(executable).expanduser()
+        return path.resolve().parent if path.exists() else None
+    resolved = shutil.which(executable)
+    return Path(resolved).resolve().parent if resolved else None
+
+
+def _path_env_key(env: dict[str, str]) -> str:
+    if os.name == "nt":
+        for key in env:
+            if key.upper() == "PATH":
+                return key
+    return "PATH"
 
 
 def _first_command_token(command: str) -> str:

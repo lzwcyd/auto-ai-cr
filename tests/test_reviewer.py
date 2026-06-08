@@ -1,8 +1,10 @@
+import os
 import subprocess
 
 from auto_ai_cr.git_ops import DiffResult
 from auto_ai_cr.config import ToolConfig
 from auto_ai_cr.reviewer import (
+    _command_environment,
     _ensure_command_available,
     _format_command_report,
     _render_command_template,
@@ -65,6 +67,33 @@ def test_absolute_review_command_is_allowed(tmp_path):
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
 
     _ensure_command_available(f"{executable} review -")
+
+
+def test_command_environment_prepends_absolute_command_dir(tmp_path):
+    bin_dir = tmp_path / "node-bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "codex"
+    executable.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    env = _command_environment(f"{executable} review -", {"PATH": "/usr/bin"})
+
+    assert env["PATH"].split(os.pathsep)[0] == str(bin_dir.resolve())
+    assert "/usr/bin" in env["PATH"].split(os.pathsep)
+
+
+def test_command_environment_preserves_windows_path_key(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "node-bin"
+    bin_dir.mkdir()
+    executable = bin_dir / "codex"
+    executable.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    monkeypatch.setattr("auto_ai_cr.reviewer._path_env_key", lambda env: "Path")
+    monkeypatch.setattr("auto_ai_cr.reviewer.os.pathsep", ";")
+
+    env = _command_environment(str(executable), {"Path": "C:\\Windows"})
+
+    assert "Path" in env
+    assert "PATH" not in env
+    assert env["Path"].split(";")[0] == str(bin_dir.resolve())
 
 
 def test_build_prompt_requests_concise_human_report(tmp_path):

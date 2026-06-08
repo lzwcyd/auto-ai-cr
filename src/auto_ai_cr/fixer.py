@@ -9,7 +9,7 @@ import subprocess
 
 from .config import AppConfig, ToolConfig, resolve_reports_dir
 from .git_ops import run_git
-from .reviewer import ReviewIssue, _render_command_template
+from .reviewer import ReviewIssue, _command_environment, _render_command_template
 
 
 @dataclass(frozen=True)
@@ -151,6 +151,7 @@ def _run_command_tool(
         command,
         cwd=repo,
         shell=True,
+        env=_command_environment(command),
         input=prompt,
         text=True,
         stdout=subprocess.PIPE,
