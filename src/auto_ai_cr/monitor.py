@@ -144,6 +144,105 @@ def repo_key(repo: Path) -> str:
     return f"{repo.name}-{digest}"
 
 
+def record_review_started(
+    repo: Path,
+    sha: str,
+    scope: str,
+    source: str = "manual",
+) -> None:
+    state = _load_state()
+    processed = state.setdefault("processed", {})
+    key = f"{repo.resolve()}|{sha}"
+    current = processed.get(key, {}) if isinstance(processed.get(key), dict) else {}
+    current.update(
+        {
+            "repo": str(repo.resolve()),
+            "sha": sha,
+            "scope": scope,
+            "source": source,
+            "status": "running",
+            "startedAt": _now(),
+        }
+    )
+    processed[key] = current
+    _save_state(state)
+
+
+def record_review_finished(
+    repo: Path,
+    sha: str,
+    status: str,
+    report_path: Path | None = None,
+    issues_path: Path | None = None,
+    issue_count: int | None = None,
+    exit_code: int | None = None,
+    error: str | None = None,
+) -> None:
+    state = _load_state()
+    processed = state.setdefault("processed", {})
+    key = f"{repo.resolve()}|{sha}"
+    current = processed.get(key, {}) if isinstance(processed.get(key), dict) else {}
+    current.update(
+        {
+            "repo": str(repo.resolve()),
+            "sha": sha,
+            "status": status,
+            "finishedAt": _now(),
+        }
+    )
+    if report_path is not None:
+        current["reportPath"] = str(report_path)
+    if issues_path is not None:
+        current["issuesPath"] = str(issues_path)
+    if issue_count is not None:
+        current["issueCount"] = issue_count
+    if exit_code is not None:
+        current["exitCode"] = exit_code
+    if error:
+        current["error"] = error
+    processed[key] = current
+    _save_state(state)
+
+
+def recent_reviews(target: Path, limit: int = 8) -> list[dict[str, object]]:
+    target_type, target_path = _resolve_watch_target(target)
+    rows = []
+    for value in _processed_review_rows():
+        repo_value = value.get("repo")
+        if not isinstance(repo_value, str):
+            continue
+        try:
+            repo_path = Path(repo_value).resolve()
+        except Exception:
+            continue
+        if target_type == "repo":
+            if repo_path != target_path:
+                continue
+        else:
+            try:
+                repo_path.relative_to(target_path)
+            except ValueError:
+                continue
+        rows.append(value)
+    rows.sort(key=lambda row: str(row.get("finishedAt") or row.get("startedAt") or row.get("queuedAt") or ""), reverse=True)
+    return rows[:limit]
+
+
+def recent_reviews_global(limit: int = 8) -> list[dict[str, object]]:
+    rows = _processed_review_rows()
+    rows.sort(key=lambda row: str(row.get("finishedAt") or row.get("startedAt") or row.get("queuedAt") or ""), reverse=True)
+    return rows[:limit]
+
+
+def _processed_review_rows() -> list[dict[str, object]]:
+    state = _load_state()
+    return [
+        value
+        for value in state.get("processed", {}).values()
+        if isinstance(value, dict)
+    ]
+
+
 def _scan_event_file(offset: int, sessions: dict[str, Trace2Session]) -> int:
     try:
         size = EVENT_PATH.stat().st_size
@@ -240,7 +339,14 @@ def _trigger_review(repo: Path, sha: str) -> None:
     key = f"{repo}|{sha}"
     if key in processed:
         return
-    processed[key] = {"queuedAt": _now(), "repo": str(repo), "sha": sha}
+    processed[key] = {
+        "queuedAt": _now(),
+        "repo": str(repo),
+        "sha": sha,
+        "scope": "latest_commit",
+        "source": "daemon",
+        "status": "queued",
+    }
     _save_state(state)
 
     env = os.environ.copy()

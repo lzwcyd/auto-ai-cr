@@ -7,7 +7,14 @@ import sys
 from .config import AppConfig, load_config, write_default_config
 from .git_ops import DiffRequest, GitError, collect_diff, find_repo
 from .hooks import install_post_commit_hook
-from .monitor import install_monitor, monitor_status, run_monitor, uninstall_monitor
+from .monitor import (
+    install_monitor,
+    monitor_status,
+    record_review_finished,
+    record_review_started,
+    run_monitor,
+    uninstall_monitor,
+)
 from .reviewer import run_review
 from .web_ui import DEFAULT_PORT, serve_ui
 from .watcher import watch_head
@@ -157,6 +164,8 @@ def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:
         max_diff_chars=config.max_diff_chars,
         reports_dir=config.reports_dir,
         poll_interval_seconds=config.poll_interval_seconds,
+        open_report_after_review=config.open_report_after_review,
+        report_open_command=config.report_open_command,
         write_notes=config.write_notes,
         note_ref=config.note_ref,
     )
@@ -174,13 +183,29 @@ def _run_once(repo: Path, config: AppConfig, commit_sha: str | None = None) -> i
             commit_sha=commit_sha,
         ),
     )
-    if not diff.diff.strip():
-        print("no diff to review")
-        return 0
-    result = run_review(repo, config, diff)
-    print(f"review report: {result.report_path}")
-    print(f"review issues: {result.issues_path}")
-    return result.exit_code
+    source = "daemon" if commit_sha else "manual"
+    record_review_started(repo, diff.head_sha, diff.scope, source=source)
+    try:
+        if not diff.diff.strip():
+            print("no diff to review")
+            record_review_finished(repo, diff.head_sha, "skipped", issue_count=0, exit_code=0)
+            return 0
+        result = run_review(repo, config, diff)
+        print(f"review report: {result.report_path}")
+        print(f"review issues: {result.issues_path}")
+        record_review_finished(
+            repo,
+            diff.head_sha,
+            "done" if result.exit_code == 0 else "failed",
+            report_path=result.report_path,
+            issues_path=result.issues_path,
+            issue_count=len(result.issues),
+            exit_code=result.exit_code,
+        )
+        return result.exit_code
+    except Exception as exc:
+        record_review_finished(repo, diff.head_sha, "failed", error=str(exc))
+        raise
 
 
 if __name__ == "__main__":

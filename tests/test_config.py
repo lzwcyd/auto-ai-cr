@@ -1,4 +1,10 @@
-from auto_ai_cr.config import AppConfig, ToolConfig
+from auto_ai_cr.config import (
+    AppConfig,
+    DEFAULT_REPORTS_DIR,
+    ToolConfig,
+    normalize_user_path,
+    resolve_reports_dir,
+)
 
 
 def test_config_round_trip_preserves_command_tool():
@@ -26,3 +32,35 @@ def test_config_merges_default_ai_tool_presets():
     assert restored.fix_tools["codex"].command.startswith("codex exec")
     assert restored.fix_tools["cursor"].command.startswith("cursor-agent -p")
     assert restored.tools["command"].command == "x"
+
+
+def test_default_reports_dir_is_user_level():
+    assert AppConfig().reports_dir == DEFAULT_REPORTS_DIR
+    assert DEFAULT_REPORTS_DIR == "~/.auto-ai-cr/reviews"
+
+
+def test_resolve_reports_dir_expands_user_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    resolved = resolve_reports_dir(tmp_path / "repo", "~/.auto-ai-cr/reviews")
+
+    assert resolved == home / ".auto-ai-cr/reviews"
+
+
+def test_resolve_reports_dir_accepts_fullwidth_tilde(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    resolved = resolve_reports_dir(tmp_path / "repo", "～/.auto-ai-cr/reviews")
+
+    assert normalize_user_path("～/.auto-ai-cr/reviews") == "~/.auto-ai-cr/reviews"
+    assert resolved == home / ".auto-ai-cr/reviews"
+
+
+def test_config_normalizes_fullwidth_tilde_reports_dir():
+    restored = AppConfig.from_mapping({"reports_dir": "～/.auto-ai-cr/reviews"})
+
+    assert restored.reports_dir == "~/.auto-ai-cr/reviews"

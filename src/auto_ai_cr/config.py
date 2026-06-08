@@ -13,6 +13,7 @@ CURSOR_REVIEW_COMMAND = "cursor-agent -p --output-format text"
 CODEX_FIX_COMMAND = "codex exec --sandbox workspace-write --ask-for-approval never -"
 CLAUDE_FIX_COMMAND = "claude -p --permission-mode acceptEdits --output-format text"
 CURSOR_FIX_COMMAND = "cursor-agent -p --output-format text --trust"
+DEFAULT_REPORTS_DIR = "~/.auto-ai-cr/reviews"
 
 
 @dataclass(frozen=True)
@@ -32,8 +33,10 @@ class AppConfig:
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
     max_diff_chars: int = 120_000
-    reports_dir: str = ".auto-ai-cr/reviews"
+    reports_dir: str = DEFAULT_REPORTS_DIR
     poll_interval_seconds: float = 2.0
+    open_report_after_review: bool = False
+    report_open_command: str = ""
     write_notes: bool = True
     note_ref: str = "codex-cr"
 
@@ -66,9 +69,15 @@ class AppConfig:
             include=list(data.get("include", defaults.include)),
             exclude=list(data.get("exclude", defaults.exclude)),
             max_diff_chars=int(data.get("max_diff_chars", defaults.max_diff_chars)),
-            reports_dir=str(data.get("reports_dir", defaults.reports_dir)),
+            reports_dir=normalize_user_path(str(data.get("reports_dir", defaults.reports_dir))),
             poll_interval_seconds=float(
                 data.get("poll_interval_seconds", defaults.poll_interval_seconds)
+            ),
+            open_report_after_review=bool(
+                data.get("open_report_after_review", defaults.open_report_after_review)
+            ),
+            report_open_command=str(
+                data.get("report_open_command", defaults.report_open_command)
             ),
             write_notes=bool(data.get("write_notes", defaults.write_notes)),
             note_ref=str(data.get("note_ref", defaults.note_ref)),
@@ -107,9 +116,24 @@ class AppConfig:
             "max_diff_chars": self.max_diff_chars,
             "reports_dir": self.reports_dir,
             "poll_interval_seconds": self.poll_interval_seconds,
+            "open_report_after_review": self.open_report_after_review,
+            "report_open_command": self.report_open_command,
             "write_notes": self.write_notes,
             "note_ref": self.note_ref,
         }
+
+
+def resolve_reports_dir(repo: Path, reports_dir: str) -> Path:
+    path = Path(normalize_user_path(reports_dir)).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (repo / path).resolve()
+
+
+def normalize_user_path(value: str) -> str:
+    if value.startswith("～"):
+        return "~" + value[1:]
+    return value
 
 
 def load_config(repo: Path) -> AppConfig:

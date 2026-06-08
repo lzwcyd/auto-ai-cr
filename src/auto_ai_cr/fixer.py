@@ -7,7 +7,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
-from .config import AppConfig, ToolConfig
+from .config import AppConfig, ToolConfig, resolve_reports_dir
 from .git_ops import run_git
 from .reviewer import ReviewIssue, _render_command_template
 
@@ -18,6 +18,12 @@ class FixResult:
     exit_code: int
     diff: str
     status: str
+
+
+@dataclass(frozen=True)
+class FixPromptResult:
+    prompt_path: Path
+    prompt: str
 
 
 def run_fix(
@@ -35,7 +41,7 @@ def run_fix(
     if tool.type != "command":
         raise ValueError(f"unsupported fix tool type: {tool.type}")
 
-    output_dir = (repo / config.reports_dir / "fixes").resolve()
+    output_dir = (resolve_reports_dir(repo, config.reports_dir) / "fixes").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = output_dir / f"{timestamp}-{config.fix_tool}-fix.md"
@@ -51,10 +57,28 @@ def run_fix(
     )
 
 
+def save_fix_prompt(
+    repo: Path,
+    config: AppConfig,
+    issues: list[ReviewIssue],
+    report_path: Path | None = None,
+) -> FixPromptResult:
+    if not issues:
+        raise ValueError("请选择至少一个问题再生成修复 Prompt")
+    output_dir = (resolve_reports_dir(repo, config.reports_dir) / "fix-prompts").resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    prompt_path = output_dir / f"{timestamp}-{config.fix_tool}-prompt.md"
+    prompt = build_fix_prompt(repo, issues, report_path, agent=config.fix_tool)
+    prompt_path.write_text(prompt, encoding="utf-8")
+    return FixPromptResult(prompt_path=prompt_path, prompt=prompt)
+
+
 def build_fix_prompt(
     repo: Path,
     issues: list[ReviewIssue],
     report_path: Path | None = None,
+    agent: str = "agent",
 ) -> str:
     issue_payload = json.dumps(
         {"issues": [issue.to_mapping() for issue in issues]},
@@ -62,6 +86,7 @@ def build_fix_prompt(
         indent=2,
     )
     report_line = f"CR 报告路径：{report_path}\n" if report_path else ""
+    agent_line = _agent_instruction(agent)
     return f"""你是自动代码修复 agent。请在本地仓库中直接修改代码，只修复用户选中的 CR 问题。
 
 约束：
@@ -70,6 +95,7 @@ def build_fix_prompt(
 3. 如果某个问题无法安全修复，请在最终输出里说明原因，不要猜测式修改。
 4. 修改完成后，请总结修改了哪些文件、每个 selected issue 如何被处理、是否运行了测试。
 5. 不要自动提交 commit。
+6. {agent_line}
 
 仓库：{repo}
 {report_line}
@@ -79,6 +105,16 @@ Selected issues:
 {issue_payload}
 ```
 """
+
+
+def _agent_instruction(agent: str) -> str:
+    if agent == "codex":
+        return "面向 Codex CLI 执行：优先用最小补丁完成修复，并在结束前运行相关测试。"
+    if agent == "claude":
+        return "面向 Claude Code 执行：请先简述修复计划，再直接编辑文件并报告验证结果。"
+    if agent == "cursor":
+        return "面向 Cursor Agent 执行：请按 issue id 逐项修复，避免改动未选中的问题。"
+    return "面向通用代码 Agent 执行：请直接修改本地文件，并给出清晰的验证说明。"
 
 
 def issue_from_mapping(data: dict[str, object]) -> ReviewIssue:

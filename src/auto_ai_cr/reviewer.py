@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 from typing import Any
 
-from .config import AppConfig, ToolConfig
+from .config import AppConfig, ToolConfig, resolve_reports_dir
 from .git_ops import DiffResult, run_git
+from .opener import maybe_open_report
 
 
 @dataclass(frozen=True)
@@ -51,15 +53,38 @@ def build_prompt(repo: Path, diff: DiffResult) -> str:
     base_line = f"Base：{diff.base_branch}\n" if diff.scope == "branch_diff" else ""
     return f"""你是资深代码审查助手。请对下面 Git diff 做 Code Review。
 
-优先级：
-1. 找出会导致线上故障、数据错误、安全问题、并发问题、兼容性问题的缺陷。
-2. 找出明显遗漏的测试。
-3. 只在有明确收益时提出可维护性建议。
-4. 如果没有问题，请明确说明没有发现高置信问题。
+审查重点按优先级处理：
+1. 会导致线上故障、数据错误、安全问题、并发问题、兼容性问题的缺陷。
+2. 明显遗漏的测试。
+3. 只有明确收益时才提出可维护性建议。
 
-输出格式：
-1. 先输出给人看的 Markdown Review，按严重程度排序。每条问题包含文件/位置线索、风险、建议修复方式。
-2. 最后必须输出一个机器可读 JSON 代码块，格式严格如下：
+输出要求：
+1. 用中文输出，简洁直接，不要展开背景知识，不要重复 diff。
+2. 先给人看的 Markdown，严格使用下面结构：
+
+# CR 结果
+
+## 结论
+- 状态：通过 / 需修复 / 有风险
+- 摘要：1 句话说明整体判断。
+- 问题数：Critical x / Warning y / Suggestion z
+
+## 必须处理
+如果没有 Critical 或 Warning，写“无”。
+每条最多 4 行：
+### CR-001 标题
+- 位置：path:line
+- 问题：一句话说明。
+- 风险：一句话说明。
+- 建议：一句话说明。
+
+## 可选建议
+只列 suggestion；没有则写“无”。
+
+## 测试建议
+只列必要测试；没有则写“无”。
+
+3. 最后必须输出一个机器可读 JSON 代码块，格式严格如下：
 
 ```auto-ai-cr-issues
 {{
@@ -79,6 +104,7 @@ def build_prompt(repo: Path, diff: DiffResult) -> str:
 ```
 
 如果没有发现问题，issues 必须是空数组。不要在 JSON 代码块内写注释，不要使用 Markdown。
+除 JSON 代码块外，整份人类可读 Review 尽量控制在 120 行以内。
 
 仓库：{repo}
 范围：{diff.scope}
@@ -93,7 +119,7 @@ Diff 是否截断：{"是" if diff.truncated else "否"}
 
 
 def run_review(repo: Path, config: AppConfig, diff: DiffResult) -> ReviewResult:
-    reports_dir = (repo / config.reports_dir).resolve()
+    reports_dir = resolve_reports_dir(repo, config.reports_dir)
     reports_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     report_path = reports_dir / f"{timestamp}-{diff.head_sha[:12]}-{diff.scope}.md"
@@ -109,10 +135,12 @@ def run_review(repo: Path, config: AppConfig, diff: DiffResult) -> ReviewResult:
         report_path.write_text(prompt, encoding="utf-8")
         issues = _write_issues(issues_path, [])
         _write_notes(repo, config, diff, report_path)
+        maybe_open_report(config, report_path)
         return ReviewResult(report_path=report_path, issues_path=issues_path, issues=issues, exit_code=0)
     if tool.type == "command":
         result = _run_command_tool(repo, tool, diff, prompt, report_path, issues_path)
         _write_notes(repo, config, diff, report_path)
+        maybe_open_report(config, report_path)
         return result
     raise ValueError(f"unsupported tool type: {tool.type}")
 
@@ -127,6 +155,7 @@ def _run_command_tool(
 ) -> ReviewResult:
     if not tool.command:
         raise ValueError("command tool requires a command")
+    _ensure_command_available(tool.command)
 
     command = _render_command_template(
         tool.command,
@@ -148,22 +177,7 @@ def _run_command_tool(
         stderr=subprocess.PIPE,
         check=False,
     )
-    report = [
-        f"# Auto AI CR Report",
-        "",
-        f"- Tool: command",
-        f"- Command: `{tool.command}`",
-        f"- Exit code: {completed.returncode}",
-        f"- Scope: {diff.scope}",
-        f"- Base: {diff.base_branch}",
-        f"- HEAD: {diff.head_sha}",
-        "",
-        "## Review Output",
-        "",
-        completed.stdout.strip() or "(empty stdout)",
-    ]
-    if completed.stderr.strip():
-        report.extend(["", "## Tool Stderr", "", completed.stderr.strip()])
+    report = _format_command_report(tool, diff, completed)
     report_path.write_text("\n".join(report) + "\n", encoding="utf-8")
     issues = _write_issues(issues_path, parse_issues(completed.stdout))
     return ReviewResult(
@@ -172,6 +186,76 @@ def _run_command_tool(
         issues=issues,
         exit_code=completed.returncode,
     )
+
+
+def _format_command_report(
+    tool: ToolConfig,
+    diff: DiffResult,
+    completed: subprocess.CompletedProcess[str],
+) -> list[str]:
+    output = completed.stdout.strip() or "未收到 Review 输出。"
+    report = [
+        "# Auto AI CR",
+        "",
+        f"> {diff.subject or diff.scope} · `{diff.head_sha[:12]}` · {diff.scope}",
+        "",
+        output,
+        "",
+        "<details>",
+        "<summary>运行信息</summary>",
+        "",
+        f"- Tool: `{tool.command}`",
+        f"- Exit code: `{completed.returncode}`",
+        f"- Scope: `{diff.scope}`",
+        f"- Base: `{diff.base_branch}`",
+        f"- HEAD: `{diff.head_sha}`",
+        f"- Diff truncated: `{'yes' if diff.truncated else 'no'}`",
+        "",
+        "</details>",
+    ]
+    if completed.stderr.strip():
+        report.extend(
+            [
+                "",
+                "<details>",
+                "<summary>工具错误输出</summary>",
+                "",
+                "```text",
+                completed.stderr.strip(),
+                "```",
+                "",
+                "</details>",
+            ]
+        )
+    return report
+
+
+def _ensure_command_available(command: str) -> None:
+    executable = _first_command_token(command)
+    if not executable:
+        return
+    if _uses_shell_features(command):
+        return
+    if "/" in executable:
+        if Path(executable).expanduser().exists():
+            return
+    elif shutil.which(executable):
+        return
+    raise ValueError(
+        f"找不到 CR 工具 `{executable}`。请先安装它，或在 UI 的“外部命令”里配置完整路径。"
+    )
+
+
+def _first_command_token(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return ""
+    return parts[0] if parts else ""
+
+
+def _uses_shell_features(command: str) -> bool:
+    return any(token in command for token in ["|", "&&", "||", ";", "$(", "`", "<(", ">(", "\n"])
 
 
 def _render_command_template(command: str, values: dict[str, str]) -> str:
