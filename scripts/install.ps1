@@ -49,9 +49,16 @@ try {
   New-Item -ItemType Directory -Force $binDir | Out-Null
 
   Expand-Archive -Path $archive -DestinationPath $installDir -Force
-  Copy-Item (Join-Path $installDir "auto-ai-cr.exe") (Join-Path $binDir "auto-ai-cr.exe") -Force
+  $target = Join-Path $binDir "auto-ai-cr.exe"
+  $targetTmp = Join-Path $binDir ("auto-ai-cr-" + [System.Guid]::NewGuid().ToString("N") + ".tmp.exe")
+  Copy-Item (Join-Path $installDir "auto-ai-cr.exe") $targetTmp -Force
+  if (Test-Path $target) {
+    Remove-Item -Force $target
+  }
+  Move-Item -Force $targetTmp $target
+  & $target --version | Out-Null
 
-  Write-Host "auto-ai-cr installed: $(Join-Path $binDir "auto-ai-cr.exe")"
+  Write-Host "auto-ai-cr installed: $target"
   if (($env:Path -split ";") -notcontains $binDir) {
     Write-Host ""
     Write-Host "Add this directory to PATH if auto-ai-cr.exe is not found:"

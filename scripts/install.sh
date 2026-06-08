@@ -99,10 +99,15 @@ case "$asset" in
 esac
 
 chmod +x "$INSTALL_DIR/$binary_name" 2>/dev/null || true
-cp "$INSTALL_DIR/$binary_name" "$BIN_DIR/$binary_name"
-chmod +x "$BIN_DIR/$binary_name" 2>/dev/null || true
+target="$BIN_DIR/$binary_name"
+target_tmp="$(mktemp "$BIN_DIR/.auto-ai-cr.XXXXXX")"
+cp "$INSTALL_DIR/$binary_name" "$target_tmp"
+chmod +x "$target_tmp" 2>/dev/null || true
+mv -f "$target_tmp" "$target"
+chmod +x "$target" 2>/dev/null || true
+"$target" --version >/dev/null
 
-echo "auto-ai-cr installed: $BIN_DIR/$binary_name"
+echo "auto-ai-cr installed: $target"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
