@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -236,7 +237,7 @@ def _ensure_command_available(command: str) -> None:
         return
     if _uses_shell_features(command):
         return
-    if "/" in executable:
+    if "/" in executable or "\\" in executable:
         if Path(executable).expanduser().exists():
             return
     elif shutil.which(executable):
@@ -248,7 +249,7 @@ def _ensure_command_available(command: str) -> None:
 
 def _first_command_token(command: str) -> str:
     try:
-        parts = shlex.split(command)
+        parts = shlex.split(command, posix=os.name != "nt")
     except ValueError:
         return ""
     return parts[0] if parts else ""

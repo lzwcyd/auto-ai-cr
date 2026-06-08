@@ -43,6 +43,7 @@ def test_resolve_reports_dir_expands_user_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     resolved = resolve_reports_dir(tmp_path / "repo", "~/.auto-ai-cr/reviews")
 
@@ -53,6 +54,7 @@ def test_resolve_reports_dir_accepts_fullwidth_tilde(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     resolved = resolve_reports_dir(tmp_path / "repo", "～/.auto-ai-cr/reviews")
 
