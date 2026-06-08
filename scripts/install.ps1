@@ -24,7 +24,23 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 try {
   $archive = Join-Path $tmp $asset
   Write-Host "Downloading auto-ai-cr $version ($asset)"
-  Invoke-WebRequest -Uri $url -OutFile $archive
+  $downloaded = $false
+  for ($attempt = 1; $attempt -le 6; $attempt++) {
+    try {
+      Invoke-WebRequest -Uri $url -OutFile $archive
+      $downloaded = $true
+      break
+    } catch {
+      if ($attempt -eq 6) {
+        throw
+      }
+      Write-Host "Download failed, retrying in 2 seconds ($attempt/6)..."
+      Start-Sleep -Seconds 2
+    }
+  }
+  if (-not $downloaded) {
+    throw "auto-ai-cr: failed to download $url"
+  }
 
   if (Test-Path $installDir) {
     Remove-Item -Recurse -Force $installDir

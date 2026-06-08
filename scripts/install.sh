@@ -17,9 +17,9 @@ download() {
   local url="$1"
   local output="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$output"
+    curl --retry 5 --retry-delay 2 --retry-connrefused -fsSL "$url" -o "$output"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$output" "$url"
+    wget --tries=6 --waitretry=2 --retry-connrefused -qO "$output" "$url"
   else
     echo "auto-ai-cr: curl or wget is required" >&2
     exit 1

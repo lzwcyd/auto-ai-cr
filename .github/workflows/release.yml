@@ -56,7 +56,10 @@ jobs:
         run: python -m PyInstaller --clean --onefile --name auto-ai-cr --paths src packaging/auto-ai-cr.py
 
       - name: Smoke test executable
-        run: dist/${{ matrix.binary }} --help
+        run: |
+          dist/${{ matrix.binary }} --version
+          dist/${{ matrix.binary }} help
+          dist/${{ matrix.binary }} help run
         shell: bash
 
       - name: Package Unix asset
