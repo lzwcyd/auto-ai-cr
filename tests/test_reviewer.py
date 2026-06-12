@@ -81,6 +81,22 @@ def test_command_environment_prepends_absolute_command_dir(tmp_path):
     assert "/usr/bin" in env["PATH"].split(os.pathsep)
 
 
+def test_command_environment_keeps_symlink_bin_dir(tmp_path):
+    node_root = tmp_path / "node"
+    node_bin = node_root / "bin"
+    package_bin = node_root / "lib" / "node_modules" / "@openai" / "codex" / "bin"
+    node_bin.mkdir(parents=True)
+    package_bin.mkdir(parents=True)
+    real_codex = package_bin / "codex.js"
+    real_codex.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    symlink_codex = node_bin / "codex"
+    symlink_codex.symlink_to(real_codex)
+
+    env = _command_environment(f"{symlink_codex} review -", {"PATH": "/usr/bin"})
+
+    assert env["PATH"].split(os.pathsep)[0] == str(node_bin)
+
+
 def test_command_environment_preserves_windows_path_key(tmp_path, monkeypatch):
     bin_dir = tmp_path / "node-bin"
     bin_dir.mkdir()

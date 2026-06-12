@@ -267,9 +267,9 @@ def _command_executable_dir(command: str) -> Path | None:
         return None
     if "/" in executable or "\\" in executable:
         path = Path(executable).expanduser()
-        return path.resolve().parent if path.exists() else None
+        return path.absolute().parent if path.exists() else None
     resolved = shutil.which(executable)
-    return Path(resolved).resolve().parent if resolved else None
+    return Path(resolved).absolute().parent if resolved else None
 
 
 def _path_env_key(env: dict[str, str]) -> str:
