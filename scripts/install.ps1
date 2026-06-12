@@ -5,6 +5,19 @@ $version = if ($env:AUTO_AI_CR_VERSION) { $env:AUTO_AI_CR_VERSION } else { "late
 $installDir = if ($env:AUTO_AI_CR_INSTALL_DIR) { $env:AUTO_AI_CR_INSTALL_DIR } else { Join-Path $HOME ".auto-ai-cr\bin" }
 $binDir = if ($env:AUTO_AI_CR_BIN_DIR) { $env:AUTO_AI_CR_BIN_DIR } else { Join-Path $HOME ".local\bin" }
 
+function Restart-AutoAiCrDaemonIfInstalled {
+  if ($env:AUTO_AI_CR_RESTART_DAEMON -eq "0") {
+    return
+  }
+  $taskName = "auto-ai-cr-daemon"
+  $query = schtasks /Query /TN $taskName 2>$null
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "Restarting auto-ai-cr daemon"
+    schtasks /End /TN $taskName 2>$null | Out-Null
+    schtasks /Run /TN $taskName 2>$null | Out-Null
+  }
+}
+
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -notin @("AMD64", "x86_64")) {
   throw "auto-ai-cr: unsupported Windows architecture: $arch"
@@ -59,6 +72,7 @@ try {
   & $target --version | Out-Null
 
   Write-Host "auto-ai-cr installed: $target"
+  Restart-AutoAiCrDaemonIfInstalled
   if (($env:Path -split ";") -notcontains $binDir) {
     Write-Host ""
     Write-Host "Add this directory to PATH if auto-ai-cr.exe is not found:"

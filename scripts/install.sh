@@ -60,6 +60,33 @@ detect_asset() {
   esac
 }
 
+restart_daemon_if_installed() {
+  if [ "${AUTO_AI_CR_RESTART_DAEMON:-1}" = "0" ]; then
+    return
+  fi
+  local os
+  os="$(uname -s)"
+  case "$os" in
+    Darwin)
+      local plist="$HOME/Library/LaunchAgents/com.auto-ai-cr.daemon.plist"
+      if [ -f "$plist" ] && command -v launchctl >/dev/null 2>&1; then
+        echo "Restarting auto-ai-cr daemon"
+        launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+        launchctl bootstrap "gui/$(id -u)" "$plist" >/dev/null 2>&1 || true
+        launchctl kickstart -k "gui/$(id -u)/com.auto-ai-cr.daemon" >/dev/null 2>&1 || true
+      fi
+      ;;
+    Linux)
+      local service="$HOME/.config/systemd/user/com.auto-ai-cr.daemon.service"
+      if [ -f "$service" ] && command -v systemctl >/dev/null 2>&1; then
+        echo "Restarting auto-ai-cr daemon"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+        systemctl --user restart com.auto-ai-cr.daemon.service >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
 tmp_dir="$(mktemp -d)"
 cleanup() {
   rm -rf "$tmp_dir"
@@ -108,6 +135,7 @@ chmod +x "$target" 2>/dev/null || true
 "$target" --version >/dev/null
 
 echo "auto-ai-cr installed: $target"
+restart_daemon_if_installed
 
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
