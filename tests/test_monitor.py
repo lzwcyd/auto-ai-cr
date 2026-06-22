@@ -1,6 +1,11 @@
 from pathlib import Path
+import json
+import subprocess
 
+import auto_ai_cr.cli as cli
 import auto_ai_cr.monitor as monitor
+from auto_ai_cr.config import AppConfig
+from auto_ai_cr.git_ops import GitError
 from auto_ai_cr.monitor import (
     expected_trace2_target,
     monitor_label,
@@ -52,3 +57,51 @@ def test_recent_reviews_returns_recorded_repo_runs(tmp_path, monkeypatch):
     assert rows[0]["status"] == "done"
     assert rows[0]["issueCount"] == 2
     assert rows[0]["source"] == "daemon"
+
+
+def test_daemon_run_marks_commit_failed_when_diff_collection_fails(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(monitor, "STATE_PATH", state_path)
+    monkeypatch.setattr(monitor, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(monitor, "EVENT_PATH", tmp_path / "trace2-event.jsonl")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fail_collect_diff(repo, request):
+        raise GitError("bad diff")
+
+    monkeypatch.setattr(cli, "collect_diff", fail_collect_diff)
+
+    try:
+        cli._run_once(repo, AppConfig(), commit_sha="abc123")
+    except GitError:
+        pass
+
+    rows = list(json.loads(state_path.read_text())["processed"].values())
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["sha"] == "abc123"
+    assert rows[0]["source"] == "daemon"
+    assert rows[0]["error"] == "bad diff"
+
+
+def test_trigger_review_marks_failed_when_process_cannot_start(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(monitor, "STATE_PATH", state_path)
+    monkeypatch.setattr(monitor, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(monitor, "EVENT_PATH", tmp_path / "trace2-event.jsonl")
+    monkeypatch.setattr(monitor, "RUN_OUT_PATH", tmp_path / "run.out.log")
+    monkeypatch.setattr(monitor, "RUN_ERR_PATH", tmp_path / "run.err.log")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def fail_popen(*args, **kwargs):
+        raise OSError("no launcher")
+
+    monkeypatch.setattr(subprocess, "Popen", fail_popen)
+
+    monitor._trigger_review(repo, "abc123")
+
+    rows = list(json.loads(state_path.read_text())["processed"].values())
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["sha"] == "abc123"
+    assert "no launcher" in rows[0]["error"]

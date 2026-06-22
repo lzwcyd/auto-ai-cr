@@ -210,20 +210,25 @@ def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:
 
 
 def _run_once(repo: Path, config: AppConfig, commit_sha: str | None = None) -> int:
-    diff = collect_diff(
-        repo,
-        DiffRequest(
-            scope=config.scope,
-            base_branch=config.base_branch,
-            include=config.include,
-            exclude=config.exclude,
-            max_diff_chars=config.max_diff_chars,
-            commit_sha=commit_sha,
-        ),
-    )
     source = "daemon" if commit_sha else "manual"
-    record_review_started(repo, diff.head_sha, diff.scope, source=source)
+    if commit_sha:
+        record_review_started(repo, commit_sha, config.scope, source=source)
+    diff_head_sha = commit_sha
     try:
+        diff = collect_diff(
+            repo,
+            DiffRequest(
+                scope=config.scope,
+                base_branch=config.base_branch,
+                include=config.include,
+                exclude=config.exclude,
+                max_diff_chars=config.max_diff_chars,
+                commit_sha=commit_sha,
+            ),
+        )
+        diff_head_sha = diff.head_sha
+        if not commit_sha:
+            record_review_started(repo, diff.head_sha, diff.scope, source=source)
         if not diff.diff.strip():
             print("no diff to review")
             record_review_finished(repo, diff.head_sha, "skipped", issue_count=0, exit_code=0)
@@ -242,7 +247,8 @@ def _run_once(repo: Path, config: AppConfig, commit_sha: str | None = None) -> i
         )
         return result.exit_code
     except Exception as exc:
-        record_review_finished(repo, diff.head_sha, "failed", error=str(exc))
+        if diff_head_sha:
+            record_review_finished(repo, diff_head_sha, "failed", error=str(exc))
         raise
 
 

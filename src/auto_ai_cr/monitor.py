@@ -18,6 +18,8 @@ from .git_ops import find_repo, run_git, try_find_repo
 STATE_ROOT = Path.home() / ".auto-ai-cr/daemon"
 STATE_PATH = STATE_ROOT / "state.json"
 EVENT_PATH = STATE_ROOT / "trace2-event.jsonl"
+RUN_OUT_PATH = STATE_ROOT / "run.out.log"
+RUN_ERR_PATH = STATE_ROOT / "run.err.log"
 LAUNCH_AGENT_DIR = Path.home() / "Library/LaunchAgents"
 LAUNCH_LABEL = "com.auto-ai-cr.daemon"
 
@@ -357,26 +359,36 @@ def _trigger_review(repo: Path, sha: str) -> None:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(
-        [
-            *_daemon_command(),
-            "run",
-            "--repo",
-            str(repo),
-            "--scope",
-            "latest_commit",
-            "--commit",
-            sha,
-            "--config-root",
-            str(_config_root_for_repo(repo)),
-        ],
-        cwd=repo,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **kwargs,
-    )
+    command = [
+        *_daemon_command(),
+        "run",
+        "--repo",
+        str(repo),
+        "--scope",
+        "latest_commit",
+        "--commit",
+        sha,
+        "--config-root",
+        str(_config_root_for_repo(repo)),
+    ]
+    STATE_ROOT.mkdir(parents=True, exist_ok=True)
+    stdout = RUN_OUT_PATH.open("ab")
+    stderr = RUN_ERR_PATH.open("ab")
+    try:
+        subprocess.Popen(
+            command,
+            cwd=repo,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            **kwargs,
+        )
+    except Exception as exc:
+        record_review_finished(repo, sha, "failed", error=f"failed to start review process: {exc}")
+    finally:
+        stdout.close()
+        stderr.close()
 
 
 def _add_watched_target(target_type: str, path: Path) -> None:
