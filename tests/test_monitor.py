@@ -105,3 +105,88 @@ def test_trigger_review_marks_failed_when_process_cannot_start(tmp_path, monkeyp
     assert rows[0]["status"] == "failed"
     assert rows[0]["sha"] == "abc123"
     assert "no launcher" in rows[0]["error"]
+
+
+def test_trigger_review_records_pending_until_review_finishes(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(monitor, "STATE_PATH", state_path)
+    monkeypatch.setattr(monitor, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(monitor, "EVENT_PATH", tmp_path / "trace2-event.jsonl")
+    monkeypatch.setattr(monitor, "RUN_OUT_PATH", tmp_path / "run.out.log")
+    monkeypatch.setattr(monitor, "RUN_ERR_PATH", tmp_path / "run.err.log")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    class PopenStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", PopenStub)
+
+    monitor._trigger_review(repo, "abc123")
+
+    state = json.loads(state_path.read_text())
+    key = f"{repo.resolve()}|abc123"
+    assert state["processed"][key]["status"] == "queued"
+    assert state["pendingReviews"][key]["status"] == "dispatching"
+
+    record_review_finished(repo, "abc123", "done")
+
+    state = json.loads(state_path.read_text())
+    assert key not in state["pendingReviews"]
+
+
+def test_resume_pending_reviews_dispatches_stale_items(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(monitor, "STATE_PATH", state_path)
+    monkeypatch.setattr(monitor, "STATE_ROOT", tmp_path)
+    monkeypatch.setattr(monitor, "EVENT_PATH", tmp_path / "trace2-event.jsonl")
+    monkeypatch.setattr(monitor, "RUN_OUT_PATH", tmp_path / "run.out.log")
+    monkeypatch.setattr(monitor, "RUN_ERR_PATH", tmp_path / "run.err.log")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    key = f"{repo.resolve()}|abc123"
+    state_path.write_text(
+        json.dumps(
+            {
+                "watchedRepos": [],
+                "watchedRoots": [],
+                "processed": {
+                    key: {
+                        "queuedAt": "2026-06-29T00:00:00+00:00",
+                        "repo": str(repo.resolve()),
+                        "sha": "abc123",
+                        "scope": "latest_commit",
+                        "source": "daemon",
+                        "status": "queued",
+                    }
+                },
+                "pendingReviews": {
+                    key: {
+                        "queuedAt": "2026-06-29T00:00:00+00:00",
+                        "repo": str(repo.resolve()),
+                        "sha": "abc123",
+                        "scope": "latest_commit",
+                        "source": "daemon",
+                        "status": "queued",
+                        "attempts": 0,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    class PopenStub:
+        def __init__(self, command, **kwargs):
+            calls.append(command)
+
+    monkeypatch.setattr(subprocess, "Popen", PopenStub)
+
+    monitor._resume_pending_reviews()
+
+    state = json.loads(state_path.read_text())
+    assert len(calls) == 1
+    assert state["pendingReviews"][key]["status"] == "dispatching"
+    assert state["pendingReviews"][key]["attempts"] == 1

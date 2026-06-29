@@ -17,6 +17,7 @@ from .monitor import (
     uninstall_monitor,
 )
 from .reviewer import run_review
+from .updater import ensure_latest_before_review
 from .web_ui import DEFAULT_PORT, serve_ui
 from .watcher import watch_head
 
@@ -211,10 +212,13 @@ def _override(config: AppConfig, args: argparse.Namespace) -> AppConfig:
 
 def _run_once(repo: Path, config: AppConfig, commit_sha: str | None = None) -> int:
     source = "daemon" if commit_sha else "manual"
-    if commit_sha:
-        record_review_started(repo, commit_sha, config.scope, source=source)
     diff_head_sha = commit_sha
     try:
+        update_result = ensure_latest_before_review(lambda message: print(message))
+        if update_result.message and not update_result.skipped:
+            print(update_result.message, file=sys.stderr if update_result.error else sys.stdout)
+        if commit_sha:
+            record_review_started(repo, commit_sha, config.scope, source=source)
         diff = collect_diff(
             repo,
             DiffRequest(

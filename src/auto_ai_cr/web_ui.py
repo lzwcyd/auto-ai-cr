@@ -47,6 +47,7 @@ from .monitor import (
 )
 from .opener import open_report
 from .reviewer import run_review
+from .updater import ensure_latest_before_review
 
 
 DEFAULT_PORT = 8765
@@ -164,7 +165,7 @@ def _handler(default_repo: Path) -> type[BaseHTTPRequestHandler]:
                     _save_ui_profile(targets, str(data.get("project") or ""))
                     review_repo = _review_repo(targets, str(data.get("project") or ""))
                     job = _start_review_job(targets, review_repo, config)
-                    self._json({"ok": True, "job": job, "state": _state(targets, str(review_repo))})
+                    self._json({"ok": True, "job": job})
                     return
                 if self.path == "/api/fix":
                     config = AppConfig.from_mapping(data["config"])
@@ -580,7 +581,13 @@ def _job_finished_stage(status: str) -> str:
 
 def _run_once(repo: Path, config: AppConfig, job_id: str | None = None) -> dict[str, object]:
     if job_id:
-        _update_job(job_id, stage="收集 Git diff")
+        _update_job(job_id, stage="检查 auto-ai-cr 更新")
+    update_result = ensure_latest_before_review(
+        lambda message: _update_job(job_id, stage=message) if job_id else None
+    )
+    update_payload = _update_payload(update_result)
+    if job_id:
+        _update_job(job_id, stage="收集 Git diff", **update_payload)
     diff = collect_diff(
         repo,
         DiffRequest(
@@ -596,7 +603,7 @@ def _run_once(repo: Path, config: AppConfig, job_id: str | None = None) -> dict[
         record_review_finished(repo, diff.head_sha, "skipped", issue_count=0, exit_code=0)
         if job_id:
             _update_job(job_id, stage="没有可审查的 diff")
-        return {"message": "No diff to review.", "reportPath": None, "issues": [], "skipped": True}
+        return {"message": "No diff to review.", "reportPath": None, "issues": [], "skipped": True, **update_payload}
     if job_id:
         _update_job(
             job_id,
@@ -629,7 +636,21 @@ def _run_once(repo: Path, config: AppConfig, job_id: str | None = None) -> dict[
         "issuesPath": str(result.issues_path),
         "issues": [issue.to_mapping() for issue in result.issues],
         "exitCode": result.exit_code,
+        **update_payload,
     }
+
+
+def _update_payload(update_result) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    if update_result.message and not update_result.skipped:
+        payload["updateMessage"] = update_result.message
+    if update_result.error:
+        payload["updateError"] = update_result.error
+    if update_result.latest_version:
+        payload["latestVersion"] = update_result.latest_version
+    if update_result.updated:
+        payload["updatedBeforeReview"] = True
+    return payload
 
 
 def _run_fix(
@@ -1517,15 +1538,24 @@ HTML = r"""<!doctype html>
     let lastReview = null;
     let activeJobId = null;
     let currentReportPath = "";
+    let requestBusy = false;
 
     function lines(value) {
       return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     }
 
     function setBusy(busy) {
-      for (const button of [els.refreshButton, els.saveButton, els.runButton, els.hookButton, els.stopMonitorButton, els.fixButton]) {
-        button.disabled = busy;
+      requestBusy = busy;
+      updateControlState();
+    }
+
+    function updateControlState() {
+      const jobRunning = Boolean(activeJobId);
+      for (const button of [els.refreshButton, els.saveButton, els.hookButton, els.stopMonitorButton, els.fixButton, els.openReportButton]) {
+        button.disabled = requestBusy;
       }
+      els.runButton.disabled = requestBusy || jobRunning;
+      els.copyPromptButton.disabled = requestBusy || !els.fixPrompt.value;
     }
 
     function setStatus(message, error = false) {
@@ -1764,8 +1794,8 @@ HTML = r"""<!doctype html>
       els.processBadge.textContent = statusText(status);
       els.processBadge.className = "process-pill " + status;
       els.processTitle.textContent = stage;
-      els.processMeta.textContent = job.message || job.error || job.reportPath || "";
-      const steps = ["收集 Git diff", "调用 AI 工具", "解析 CR 问题", "生成报告"];
+      els.processMeta.textContent = job.updateMessage || job.message || job.error || job.reportPath || "";
+      const steps = ["检查更新", "收集 Git diff", "调用 AI 工具", "解析 CR 问题", "生成报告"];
       const active = stepIndex(stage, status);
       els.stepList.innerHTML = "";
       steps.forEach((step, index) => {
@@ -1783,11 +1813,12 @@ HTML = r"""<!doctype html>
     }
 
     function stepIndex(stage, status) {
-      if (status === "done") return 4;
-      if (String(stage).includes("收集")) return 0;
-      if (String(stage).includes("调用")) return 1;
-      if (String(stage).includes("解析")) return 2;
-      if (String(stage).includes("完成")) return 3;
+      if (status === "done") return 5;
+      if (String(stage).includes("检查") || String(stage).includes("更新")) return 0;
+      if (String(stage).includes("收集")) return 1;
+      if (String(stage).includes("调用")) return 2;
+      if (String(stage).includes("解析")) return 3;
+      if (String(stage).includes("完成")) return 4;
       return 0;
     }
 
@@ -1873,6 +1904,10 @@ HTML = r"""<!doctype html>
     }
 
     async function startReview() {
+      if (activeJobId) {
+        setStatus("已有 CR 正在执行，请等待完成", true);
+        return;
+      }
       setBusy(true);
       try {
         const data = await api("/api/review/start", {
@@ -1882,10 +1917,12 @@ HTML = r"""<!doctype html>
         });
         if (data.state) render(data.state);
         activeJobId = data.job.id;
+        setBusy(false);
         renderProcess(data.job);
         setStatus("CR 已触发，正在执行");
         pollJob(activeJobId);
       } catch (error) {
+        activeJobId = null;
         setBusy(false);
         setStatus(error.message, true);
       }
@@ -1911,9 +1948,10 @@ HTML = r"""<!doctype html>
         renderProcess(job);
         if (job.status === "done" || job.status === "skipped") {
           renderReviewResult(job);
-          setStatus(job.message || (job.status === "skipped" ? "没有可审查的 diff" : "CR 已完成"));
+          setStatus(job.updateMessage || job.message || (job.status === "skipped" ? "没有可审查的 diff" : "CR 已完成"));
         } else {
-          setStatus(job.error || "CR 失败", true);
+          const errorMessage = job.error || "CR 失败";
+          setStatus(job.updateError ? errorMessage + "；更新检查：" + job.updateError : errorMessage, true);
         }
       } catch (error) {
         activeJobId = null;
@@ -2064,7 +2102,7 @@ HTML = r"""<!doctype html>
         if (data.state) render(data.state);
         els.fixPrompt.hidden = false;
         els.fixPrompt.value = data.prompt || "";
-        els.copyPromptButton.disabled = !els.fixPrompt.value;
+        updateControlState();
         setStatus(data.message || "修复 Prompt 已生成");
       } catch (error) {
         setStatus(error.message, true);

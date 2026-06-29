@@ -22,6 +22,8 @@ RUN_OUT_PATH = STATE_ROOT / "run.out.log"
 RUN_ERR_PATH = STATE_ROOT / "run.err.log"
 LAUNCH_AGENT_DIR = Path.home() / "Library/LaunchAgents"
 LAUNCH_LABEL = "com.auto-ai-cr.daemon"
+PENDING_DISPATCH_LEASE_SECONDS = 5 * 60
+PENDING_RUNNING_LEASE_SECONDS = 30 * 60
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ def run_monitor(repo: Path | None = None, once: bool = False, poll_seconds: floa
     sessions: dict[str, Trace2Session] = {}
 
     while True:
+        _resume_pending_reviews()
         offset = _scan_event_file(offset, sessions)
         if once:
             return 0
@@ -167,6 +170,7 @@ def record_review_started(
         }
     )
     processed[key] = current
+    _mark_pending_review_running_in_state(state, repo, sha)
     _save_state(state)
 
 
@@ -203,6 +207,7 @@ def record_review_finished(
     if error:
         current["error"] = error
     processed[key] = current
+    _clear_pending_review_in_state(state, repo, sha)
     _save_state(state)
 
 
@@ -336,21 +341,68 @@ def _config_root_for_repo(repo: Path) -> Path:
 
 
 def _trigger_review(repo: Path, sha: str) -> None:
+    _queue_pending_review(repo, sha)
+    _dispatch_pending_review(repo, sha)
+
+
+def _queue_pending_review(repo: Path, sha: str) -> None:
     state = _load_state()
     processed = state.setdefault("processed", {})
-    key = f"{repo}|{sha}"
-    if key in processed:
+    pending = state.setdefault("pendingReviews", {})
+    key = _review_key(repo, sha)
+    if key in processed and key not in pending:
         return
-    processed[key] = {
+    processed.setdefault(key, {
         "queuedAt": _now(),
         "repo": str(repo),
         "sha": sha,
         "scope": "latest_commit",
         "source": "daemon",
         "status": "queued",
-    }
+    })
+    pending.setdefault(key, {
+        "queuedAt": _now(),
+        "repo": str(repo),
+        "sha": sha,
+        "scope": "latest_commit",
+        "source": "daemon",
+        "status": "queued",
+        "attempts": 0,
+    })
     _save_state(state)
 
+
+def _resume_pending_reviews() -> None:
+    state = _load_state()
+    pending = state.get("pendingReviews", {})
+    if not isinstance(pending, dict):
+        return
+    for item in list(pending.values()):
+        if not isinstance(item, dict):
+            continue
+        repo_value = item.get("repo")
+        sha = item.get("sha")
+        if not isinstance(repo_value, str) or not isinstance(sha, str):
+            continue
+        if not _pending_review_ready(item):
+            continue
+        repo = Path(repo_value)
+        if not repo.exists():
+            record_review_finished(repo, sha, "failed", error=f"repository no longer exists: {repo}")
+            continue
+        _dispatch_pending_review(repo, sha)
+
+
+def _pending_review_ready(item: dict[str, object]) -> bool:
+    lease_until = float(item.get("leaseUntil") or 0)
+    if lease_until <= time.time():
+        return True
+    return str(item.get("status") or "") == "queued"
+
+
+def _dispatch_pending_review(repo: Path, sha: str) -> None:
+    if not _claim_pending_review(repo, sha):
+        return
     env = os.environ.copy()
     if not getattr(sys, "frozen", False):
         env.setdefault("PYTHONPATH", str(_package_src_path()))
@@ -391,6 +443,55 @@ def _trigger_review(repo: Path, sha: str) -> None:
         stderr.close()
 
 
+def _claim_pending_review(repo: Path, sha: str) -> bool:
+    state = _load_state()
+    pending = state.setdefault("pendingReviews", {})
+    key = _review_key(repo, sha)
+    item = pending.get(key)
+    if not isinstance(item, dict):
+        return False
+    if not _pending_review_ready(item):
+        return False
+    attempts = int(item.get("attempts") or 0) + 1
+    item.update(
+        {
+            "status": "dispatching",
+            "attempts": attempts,
+            "dispatchedAt": _now(),
+            "leaseUntil": time.time() + PENDING_DISPATCH_LEASE_SECONDS,
+        }
+    )
+    pending[key] = item
+    _save_state(state)
+    return True
+
+
+def _mark_pending_review_running_in_state(state: dict[str, object], repo: Path, sha: str) -> None:
+    pending = state.setdefault("pendingReviews", {})
+    key = _review_key(repo, sha)
+    item = pending.get(key)
+    if not isinstance(item, dict):
+        return
+    item.update(
+        {
+            "status": "running",
+            "startedAt": _now(),
+            "leaseUntil": time.time() + PENDING_RUNNING_LEASE_SECONDS,
+        }
+    )
+    pending[key] = item
+
+
+def _clear_pending_review_in_state(state: dict[str, object], repo: Path, sha: str) -> None:
+    pending = state.setdefault("pendingReviews", {})
+    if isinstance(pending, dict):
+        pending.pop(_review_key(repo, sha), None)
+
+
+def _review_key(repo: Path, sha: str) -> str:
+    return f"{repo.resolve()}|{sha}"
+
+
 def _add_watched_target(target_type: str, path: Path) -> None:
     state = _load_state()
     key = "watchedRepos" if target_type == "repo" else "watchedRoots"
@@ -419,15 +520,16 @@ def _remember_previous_trace2_target() -> None:
 
 def _load_state() -> dict[str, object]:
     if not STATE_PATH.exists():
-        return {"watchedRepos": [], "watchedRoots": [], "processed": {}, "startedAt": _now()}
+        return {"watchedRepos": [], "watchedRoots": [], "processed": {}, "pendingReviews": {}, "startedAt": _now()}
     try:
         with STATE_PATH.open("r", encoding="utf-8") as fp:
             state = json.load(fp)
     except Exception:
-        return {"watchedRepos": [], "watchedRoots": [], "processed": {}, "startedAt": _now()}
+        return {"watchedRepos": [], "watchedRoots": [], "processed": {}, "pendingReviews": {}, "startedAt": _now()}
     state.setdefault("watchedRepos", [])
     state.setdefault("watchedRoots", [])
     state.setdefault("processed", {})
+    state.setdefault("pendingReviews", {})
     return state
 
 

@@ -134,7 +134,15 @@ UI 只绑定本机地址，避免外部机器触发本地命令型 CR 工具。
 - Prompt 报告：只生成 Review Prompt 和 diff
 - 自定义命令：接入内部 CR 工具或其它 CLI
 
-运行一次 CR 后，页面会展示当前阶段：收集 Git diff、调用 AI 工具、解析 CR 问题、生成报告。右侧的“最近 CR”会显示 daemon 或手动触发的记录、commit、状态、问题数量和报告路径。报告默认写入 `~/.auto-ai-cr/reviews`，也可以在 UI 里改成其它目录。
+运行一次 CR 后，页面会展示当前阶段：检查更新、收集 Git diff、调用 AI 工具、解析 CR 问题、生成报告。每次 CR 前会先检查 GitHub Release 是否有新版本；发现更新时会先运行安装脚本，再继续本次 CR。更新流程带本机锁，多个 CR 同时触发时只会有一个进程执行安装，其它进程会等待并复查已安装版本。右侧的“最近 CR”会显示 daemon 或手动触发的记录、commit、状态、问题数量和报告路径。报告默认写入 `~/.auto-ai-cr/reviews`，也可以在 UI 里改成其它目录。
+
+如果在离线或内网环境中不希望自动检查更新，可以临时关闭：
+
+```bash
+AUTO_AI_CR_AUTO_UPDATE=0 auto-ai-cr run
+```
+
+源码开发模式默认跳过自动更新；如需调试这条链路，可设置 `AUTO_AI_CR_UPDATE_IN_SOURCE=1`。
 
 报告默认采用摘要式结构：先看结论、必须处理的问题、可选建议和测试建议；工具命令、退出码、stderr 等运行信息会折叠到报告底部，避免一打开就是日志。
 
@@ -172,6 +180,7 @@ git commit 成功
 -> Git Trace2 追加 JSON 事件到本机事件日志
 -> auto-ai-cr daemon 识别 cmd_name=commit 且 exit code=0
 -> auto-ai-cr daemon 读取当前 HEAD 得到 commit SHA
+-> 将 repo + commit 写入 pending 队列，防止更新或重启时丢触发
 -> 按当前配置调用 Codex CLI / Claude Code / 自定义命令
 -> 写报告到 .auto-ai-cr/reviews
 -> 写入本地 refs/notes/codex-cr
